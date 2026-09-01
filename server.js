@@ -1,18 +1,43 @@
 "use strict";
 
+const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const express = require("express");
 const { Server } = require("socket.io");
-const { ClassroomState } = require("./src/state");
+const { ClassroomState, normalizeIpAddress } = require("./src/state");
 
 const PORT = Number(process.env.PORT || 3000);
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin1234";
+const BLOCKLIST_FILE =
+  process.env.BLOCKLIST_FILE || path.join(__dirname, "data", "blocked-ips.json");
+
+function loadBlockedIps() {
+  if (!fs.existsSync(BLOCKLIST_FILE)) {
+    return [];
+  }
+
+  try {
+    const text = fs.readFileSync(BLOCKLIST_FILE, "utf8");
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn(`Could not load blocklist file: ${error.message}`);
+    return [];
+  }
+}
+
+function saveBlockedIps(entries) {
+  fs.mkdirSync(path.dirname(BLOCKLIST_FILE), { recursive: true });
+  fs.writeFileSync(BLOCKLIST_FILE, `${JSON.stringify(entries, null, 2)}\n`);
+}
 
 const app = express();
+app.set("trust proxy", true);
+
 const server = http.createServer(app);
 const io = new Server(server);
-const state = new ClassroomState();
+const state = new ClassroomState({ blockedIps: loadBlockedIps() });
 
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -26,8 +51,40 @@ function respond(reply, payload) {
   }
 }
 
+function getHeaderValue(headers, name) {
+  const value = headers[name];
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+
+  return value;
+}
+
+function getSocketIp(socket) {
+  const headers = socket.handshake.headers ?? {};
+  const forwarded =
+    getHeaderValue(headers, "cf-connecting-ip") ||
+    getHeaderValue(headers, "x-real-ip") ||
+    getHeaderValue(headers, "x-forwarded-for");
+  const firstForwarded = String(forwarded ?? "").split(",")[0].trim();
+
+  return normalizeIpAddress(firstForwarded || socket.handshake.address);
+}
+
+function getSnapshotFor(socket) {
+  return state.snapshot({ includeAdmin: socket.data.role === "admin" });
+}
+
+function sendState(socket) {
+  socket.emit("state:update", getSnapshotFor(socket));
+}
+
 function broadcastState() {
-  io.emit("state:update", state.snapshot());
+  io.sockets.sockets.forEach((socket) => sendState(socket));
+}
+
+function persistBlocklist() {
+  saveBlockedIps(state.getBlockedIps());
 }
 
 function notifyCompleteIfNeeded() {
@@ -49,16 +106,48 @@ function requireAdmin(socket, reply) {
   return true;
 }
 
+function rejectBlockedUser(socket, reply) {
+  if (!state.isIpBlocked(socket.data.ipAddress)) {
+    return false;
+  }
+
+  const message = "차단된 IP입니다. 운영자에게 문의하세요.";
+  socket.emit("access:blocked", { message, ipAddress: socket.data.ipAddress });
+  respond(reply, { ok: false, error: message });
+  return true;
+}
+
 io.on("connection", (socket) => {
-  socket.emit("state:update", state.snapshot());
+  socket.data.ipAddress = getSocketIp(socket);
+
+  if (state.isIpBlocked(socket.data.ipAddress)) {
+    socket.emit("access:blocked", {
+      message: "차단된 IP입니다. 운영자에게 문의하세요.",
+      ipAddress: socket.data.ipAddress,
+    });
+  }
+
+  sendState(socket);
 
   socket.on("user:join", (payload, reply) => {
     try {
-      const user = state.addUser(socket.id, payload?.nickname);
+      if (rejectBlockedUser(socket, reply)) {
+        return;
+      }
+
+      const user = state.addUser(
+        socket.id,
+        payload?.nickname,
+        socket.data.ipAddress,
+      );
       socket.data.role = "user";
       socket.join("users");
       state.addSystemMessage(`${user.nickname}님이 입장했습니다.`);
-      respond(reply, { ok: true, state: state.snapshot(), userId: socket.id });
+      respond(reply, {
+        ok: true,
+        state: getSnapshotFor(socket),
+        userId: socket.id,
+      });
       broadcastState();
     } catch (error) {
       respond(reply, { ok: false, error: error.message });
@@ -75,10 +164,10 @@ io.on("connection", (socket) => {
       return;
     }
 
-    state.addAdmin(socket.id);
+    state.addAdmin(socket.id, "운영자", socket.data.ipAddress);
     socket.data.role = "admin";
     socket.join("admins");
-    respond(reply, { ok: true, state: state.snapshot() });
+    respond(reply, { ok: true, state: getSnapshotFor(socket) });
     broadcastState();
   });
 
@@ -141,6 +230,87 @@ io.on("connection", (socket) => {
     broadcastState();
   });
 
+  socket.on("admin:kick-user", (payload, reply) => {
+    if (!requireAdmin(socket, reply)) {
+      return;
+    }
+
+    try {
+      const user = state.getUser(payload?.userId);
+      if (!user) {
+        throw new Error("강퇴할 사용자를 찾을 수 없습니다.");
+      }
+
+      const blocked = state.blockIp(
+        user.ipAddress,
+        `강퇴: ${user.nickname}`,
+      );
+      persistBlocklist();
+
+      const affectedUsers = state.getUsersByIp(blocked.ipAddress);
+      affectedUsers.forEach((affectedUser) => {
+        const affectedSocket = io.sockets.sockets.get(affectedUser.socketId);
+        state.remove(affectedUser.socketId);
+        affectedSocket?.emit("access:blocked", {
+          message: "운영자에 의해 강퇴되어 접속이 차단되었습니다.",
+          ipAddress: blocked.ipAddress,
+        });
+        affectedSocket?.disconnect(true);
+      });
+
+      state.addSystemMessage(
+        `${blocked.ipAddress} IP가 차단되어 ${affectedUsers.length}명이 강퇴되었습니다.`,
+      );
+      notifyCompleteIfNeeded();
+      respond(reply, {
+        ok: true,
+        blocked,
+        kickedCount: affectedUsers.length,
+      });
+      broadcastState();
+    } catch (error) {
+      respond(reply, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("admin:unblock-ip", (payload, reply) => {
+    if (!requireAdmin(socket, reply)) {
+      return;
+    }
+
+    try {
+      const ipAddress = state.unblockIp(payload?.ipAddress);
+      persistBlocklist();
+      state.addSystemMessage(`${ipAddress} IP 차단이 해제되었습니다.`);
+      respond(reply, { ok: true, ipAddress });
+      io.sockets.sockets.forEach((clientSocket) => {
+        if (clientSocket.data.ipAddress === ipAddress) {
+          clientSocket.emit("access:unblocked", {
+            message: "IP 차단이 해제되었습니다. 다시 입장할 수 있습니다.",
+            ipAddress,
+          });
+        }
+      });
+      broadcastState();
+    } catch (error) {
+      respond(reply, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("admin:delete-message", (payload, reply) => {
+    if (!requireAdmin(socket, reply)) {
+      return;
+    }
+
+    try {
+      const deletedMessage = state.deleteMessage(payload?.messageId);
+      respond(reply, { ok: true, deletedMessage });
+      broadcastState();
+    } catch (error) {
+      respond(reply, { ok: false, error: error.message });
+    }
+  });
+
   socket.on("disconnect", () => {
     const removed = state.remove(socket.id);
     if (removed?.role === "user") {
@@ -154,5 +324,5 @@ io.on("connection", (socket) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Button push site listening on http://localhost:${PORT}`);
+  console.log(`Smart drone classroom listening on http://localhost:${PORT}`);
 });

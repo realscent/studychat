@@ -9,3 +9,5 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin1234}
     ports:
       - "3000:3000"
+    volumes:
+      - ./data:/app/data

@@ -18,6 +18,8 @@ const adminControls = document.querySelector("#admin-controls");
 const startPushButton = document.querySelector("#start-push-button");
 const resetPushButton = document.querySelector("#reset-push-button");
 const pushProgress = document.querySelector("#push-progress");
+const blocklistSummary = document.querySelector("#blocklist-summary");
+const blocklist = document.querySelector("#blocklist");
 const pushPanel = document.querySelector("#push-panel");
 const pushTitle = document.querySelector("#push-title");
 const pushDescription = document.querySelector("#push-description");
@@ -100,15 +102,62 @@ function renderUsers(snapshot) {
       row.classList.add(user.pressed ? "pressed" : "waiting");
     }
 
-    const nickname = createElement("span", "nickname", user.nickname);
+    const main = createElement("div", "user-main");
+    main.append(createElement("span", "nickname", user.nickname));
+
+    if (role === "admin") {
+      main.append(createElement("span", "ip-address", user.ipAddress || "IP 없음"));
+    }
+
     const status = createElement(
       "span",
       "status",
       snapshot.push.active ? (user.pressed ? "완료" : "대기") : "접속중",
     );
 
-    row.append(nickname, status);
+    row.append(main, status);
+
+    if (role === "admin") {
+      const kickButton = createElement("button", "danger-button", "강퇴");
+      kickButton.type = "button";
+      kickButton.dataset.kickUser = user.id;
+      kickButton.dataset.nickname = user.nickname;
+      kickButton.dataset.ipAddress = user.ipAddress || "";
+      row.append(kickButton);
+    }
+
     userList.append(row);
+  });
+}
+
+function renderBlocklist(snapshot) {
+  if (role !== "admin") {
+    return;
+  }
+
+  const blockedIps = snapshot.blockedIps || [];
+  blocklist.replaceChildren();
+  blocklistSummary.textContent = `${blockedIps.length}개`;
+
+  if (blockedIps.length === 0) {
+    blocklist.append(createElement("li", "empty-row", "차단된 IP가 없습니다."));
+    return;
+  }
+
+  blockedIps.forEach((entry) => {
+    const row = createElement("li", "block-row");
+    const main = createElement("div", "block-main");
+    main.append(
+      createElement("span", "ip-address strong", entry.ipAddress),
+      createElement("span", "block-reason", entry.reason || "운영자 차단"),
+    );
+
+    const unblockButton = createElement("button", "secondary-button", "해제");
+    unblockButton.type = "button";
+    unblockButton.dataset.unblockIp = entry.ipAddress;
+
+    row.append(main, unblockButton);
+    blocklist.append(row);
   });
 }
 
@@ -123,6 +172,8 @@ function renderMessages(snapshot) {
   } else {
     snapshot.messages.forEach((message) => {
       const row = createElement("article", `message ${message.role}`);
+      row.dataset.messageId = message.id;
+
       if (message.role !== "system" && message.author !== "운영자") {
         const ownMessage =
           role === "user" &&
@@ -203,6 +254,7 @@ function renderState(snapshot) {
 
   latestState = snapshot;
   renderUsers(snapshot);
+  renderBlocklist(snapshot);
   renderMessages(snapshot);
   renderPush(snapshot);
 }
@@ -217,6 +269,16 @@ function showCompleteModal(payload) {
     payload.message || "접속한 모든 사용자가 푸쉬버튼을 눌렀습니다.";
   completeModal.hidden = false;
   completeOkButton.focus();
+}
+
+function showBlocked(message) {
+  role = null;
+  myUserId = null;
+  appShell.hidden = true;
+  joinScreen.hidden = false;
+  nicknameInput.disabled = true;
+  userForm.querySelector("button").disabled = true;
+  setEntryError(message || "차단된 IP입니다. 운영자에게 문의하세요.");
 }
 
 userForm.addEventListener("submit", async (event) => {
@@ -249,6 +311,8 @@ adminForm.addEventListener("submit", async (event) => {
     return;
   }
 
+  nicknameInput.disabled = false;
+  userForm.querySelector("button").disabled = false;
   enterRoom("admin", response.state);
 });
 
@@ -300,14 +364,85 @@ completeOkButton.addEventListener("click", async () => {
   }
 });
 
+userList.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-kick-user]");
+  if (!button || role !== "admin") {
+    return;
+  }
+
+  const nickname = button.dataset.nickname || "사용자";
+  const ipAddress = button.dataset.ipAddress || "IP 없음";
+  const confirmed = window.confirm(
+    `${nickname}님을 강퇴하고 ${ipAddress} IP를 차단할까요?`,
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  const response = await emitWithAck("admin:kick-user", {
+    userId: button.dataset.kickUser,
+  });
+  if (!response.ok) {
+    setRoomError(response.error);
+  }
+});
+
+blocklist.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-unblock-ip]");
+  if (!button || role !== "admin") {
+    return;
+  }
+
+  const response = await emitWithAck("admin:unblock-ip", {
+    ipAddress: button.dataset.unblockIp,
+  });
+  if (!response.ok) {
+    setRoomError(response.error);
+  }
+});
+
+messages.addEventListener("contextmenu", async (event) => {
+  const message = event.target.closest("[data-message-id]");
+  if (!message || role !== "admin") {
+    return;
+  }
+
+  event.preventDefault();
+  const body = message.querySelector(".message-body")?.textContent || message.textContent;
+  const confirmed = window.confirm(`이 채팅을 삭제할까요?\n\n${body.slice(0, 120)}`);
+  if (!confirmed) {
+    return;
+  }
+
+  const response = await emitWithAck("admin:delete-message", {
+    messageId: message.dataset.messageId,
+  });
+  if (!response.ok) {
+    setRoomError(response.error);
+  }
+});
+
 leaveButton.addEventListener("click", () => {
   window.location.reload();
 });
 
 socket.on("state:update", renderState);
 socket.on("push:complete", showCompleteModal);
+socket.on("access:blocked", (payload) => {
+  showBlocked(payload?.message);
+});
+socket.on("access:unblocked", (payload) => {
+  if (!role) {
+    nicknameInput.disabled = false;
+    userForm.querySelector("button").disabled = false;
+    setEntryError(payload?.message || "다시 입장할 수 있습니다.");
+  }
+});
 socket.on("disconnect", () => {
-  setRoomError("서버 연결이 끊어졌습니다. 새로고침 후 다시 입장하세요.");
+  if (role) {
+    setRoomError("서버 연결이 끊어졌습니다. 새로고침 후 다시 입장하세요.");
+  }
 });
 socket.on("connect", () => {
   if (role) {

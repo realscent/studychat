@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { ClassroomState } = require("../src/state");
+const { ClassroomState, normalizeIpAddress } = require("../src/state");
 
 test("admin sessions are excluded from user count and presence list", () => {
   const state = new ClassroomState();
@@ -24,6 +24,48 @@ test("duplicate nicknames are rejected case-insensitively", () => {
   assert.throws(() => state.addUser("user-2", "alpha"), {
     message: "이미 사용 중인 닉네임입니다.",
   });
+});
+
+test("admin snapshots include user IPs and blocklist", () => {
+  const state = new ClassroomState();
+  state.addUser("user-1", "학생1", "::ffff:10.1.3.10");
+  state.blockIp("10.1.3.99");
+
+  const publicSnapshot = state.snapshot();
+  assert.equal(publicSnapshot.users[0].ipAddress, undefined);
+  assert.equal(publicSnapshot.blockedIps, undefined);
+
+  const adminSnapshot = state.snapshot({ includeAdmin: true });
+  assert.equal(adminSnapshot.users[0].ipAddress, "10.1.3.10");
+  assert.deepEqual(
+    adminSnapshot.blockedIps.map((entry) => entry.ipAddress),
+    ["10.1.3.99"],
+  );
+});
+
+test("blocked IPs cannot join until unblocked", () => {
+  const state = new ClassroomState();
+  state.blockIp("10.1.3.10");
+
+  assert.equal(state.isIpBlocked("::ffff:10.1.3.10"), true);
+  assert.throws(() => state.addUser("user-1", "학생1", "10.1.3.10"), {
+    message: "차단된 IP입니다. 운영자에게 문의하세요.",
+  });
+
+  state.unblockIp("10.1.3.10");
+  assert.equal(state.addUser("user-1", "학생1", "10.1.3.10").ipAddress, "10.1.3.10");
+});
+
+test("chat messages can be deleted by id", () => {
+  const state = new ClassroomState();
+  state.addUser("user-1", "학생1", "10.1.3.10");
+  const message = state.addChatMessage({
+    socketId: "user-1",
+    body: "삭제할 메시지",
+  });
+
+  assert.equal(state.deleteMessage(message.id).body, "삭제할 메시지");
+  assert.equal(state.snapshot().messages.length, 0);
 });
 
 test("push round tracks waiting and completed users", () => {
@@ -75,4 +117,9 @@ test("round completion is notified once", () => {
 
   assert.equal(state.markPressed("user-1").shouldNotifyComplete, true);
   assert.equal(state.markPressed("user-1").shouldNotifyComplete, false);
+});
+
+test("IP addresses are normalized", () => {
+  assert.equal(normalizeIpAddress("::ffff:10.1.3.10"), "10.1.3.10");
+  assert.equal(normalizeIpAddress("::1"), "127.0.0.1");
 });

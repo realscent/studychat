@@ -145,7 +145,8 @@ button:disabled {
 .chat-form button,
 .primary-button,
 .secondary-button,
-.ghost-button {
+.ghost-button,
+.danger-button {
   min-height: 42px;
   border-radius: 8px;
   padding: 0 16px;
@@ -248,6 +249,15 @@ button:disabled {
   background: var(--neutral-bg);
 }
 
+.danger-button {
+  background: var(--red-text);
+  color: #fff;
+}
+
+.danger-button:hover {
+  background: #8a1f14;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
@@ -322,7 +332,7 @@ button:disabled {
 
 .user-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   background: var(--neutral-bg);
@@ -339,12 +349,35 @@ button:disabled {
   color: var(--green-text);
 }
 
-.nickname {
+.user-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nickname,
+.ip-address,
+.block-reason {
   min-width: 0;
   overflow: hidden;
-  font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.nickname {
+  font-weight: 900;
+}
+
+.ip-address {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ip-address.strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 900;
 }
 
 .status {
@@ -362,12 +395,64 @@ button:disabled {
 }
 
 .admin-controls {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  padding: 14px;
-  border-bottom: 1px solid var(--line);
+}
+
+.blocklist-panel {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.compact-heading {
+  padding: 10px 12px;
+}
+
+.compact-heading h2 {
+  font-size: 15px;
+}
+
+.blocklist {
+  display: grid;
+  gap: 8px;
+  max-height: 150px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  list-style: none;
+}
+
+.block-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--red-bg);
+}
+
+.block-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.block-reason {
+  color: var(--red-text);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .push-panel {
@@ -521,5 +606,13 @@ button:disabled {
   .inline-field,
   .chat-form {
     grid-template-columns: 1fr;
+  }
+
+  .user-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .user-row .danger-button {
+    grid-column: 1 / -1;
   }
 }

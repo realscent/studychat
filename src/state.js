@@ -31,14 +31,54 @@ function normalizeMessage(input) {
   return body.slice(0, MAX_MESSAGE_LENGTH);
 }
 
+function normalizeIpAddress(input) {
+  const address = String(input ?? "").trim();
+  if (!address) {
+    return "알 수 없음";
+  }
+
+  if (address.startsWith("::ffff:")) {
+    return address.slice(7);
+  }
+
+  if (address === "::1") {
+    return "127.0.0.1";
+  }
+
+  return address;
+}
+
+function normalizeBlockedEntry(entry) {
+  if (typeof entry === "string") {
+    return {
+      ipAddress: normalizeIpAddress(entry),
+      blockedAt: nowIso(),
+      reason: "운영자 차단",
+    };
+  }
+
+  return {
+    ipAddress: normalizeIpAddress(entry?.ipAddress ?? entry?.ip),
+    blockedAt: entry?.blockedAt || nowIso(),
+    reason: entry?.reason || "운영자 차단",
+  };
+}
+
 class ClassroomState {
-  constructor({ maxMessages = DEFAULT_MAX_MESSAGES } = {}) {
+  constructor({ maxMessages = DEFAULT_MAX_MESSAGES, blockedIps = [] } = {}) {
     this.maxMessages = maxMessages;
     this.users = new Map();
     this.admins = new Map();
     this.messages = [];
+    this.blockedIps = new Map();
     this.roundSequence = 0;
     this.pushRound = this.createInactiveRound();
+
+    blockedIps.map(normalizeBlockedEntry).forEach((entry) => {
+      if (entry.ipAddress !== "알 수 없음") {
+        this.blockedIps.set(entry.ipAddress, entry);
+      }
+    });
   }
 
   createInactiveRound() {
@@ -51,7 +91,12 @@ class ClassroomState {
     };
   }
 
-  addUser(socketId, rawNickname) {
+  addUser(socketId, rawNickname, rawIpAddress = "알 수 없음") {
+    const ipAddress = normalizeIpAddress(rawIpAddress);
+    if (this.isIpBlocked(ipAddress)) {
+      throw new Error("차단된 IP입니다. 운영자에게 문의하세요.");
+    }
+
     const nickname = normalizeNickname(rawNickname);
     const normalized = nickname.toLocaleLowerCase("ko-KR");
     const duplicate = Array.from(this.users.values()).some(
@@ -65,6 +110,7 @@ class ClassroomState {
     const user = {
       socketId,
       nickname,
+      ipAddress,
       joinedAt: nowIso(),
     };
 
@@ -78,10 +124,11 @@ class ClassroomState {
     return user;
   }
 
-  addAdmin(socketId, name = "운영자") {
+  addAdmin(socketId, name = "운영자", rawIpAddress = "알 수 없음") {
     const admin = {
       socketId,
       name,
+      ipAddress: normalizeIpAddress(rawIpAddress),
       joinedAt: nowIso(),
     };
 
@@ -122,6 +169,17 @@ class ClassroomState {
     return null;
   }
 
+  getUser(socketId) {
+    return this.users.get(socketId) ?? null;
+  }
+
+  getUsersByIp(rawIpAddress) {
+    const ipAddress = normalizeIpAddress(rawIpAddress);
+    return Array.from(this.users.values()).filter(
+      (user) => user.ipAddress === ipAddress,
+    );
+  }
+
   addChatMessage({ socketId, body }) {
     const client = this.getClient(socketId);
     if (!client) {
@@ -136,6 +194,7 @@ class ClassroomState {
     const author = client.role === "admin" ? "운영자" : client.user.nickname;
     return this.addMessage({
       author,
+      authorId: socketId,
       role: client.role,
       body: normalizedBody,
     });
@@ -149,15 +208,17 @@ class ClassroomState {
 
     return this.addMessage({
       author: "시스템",
+      authorId: null,
       role: "system",
       body: normalizedBody,
     });
   }
 
-  addMessage({ author, role, body }) {
+  addMessage({ author, authorId, role, body }) {
     const message = {
       id: `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       author,
+      authorId,
       role,
       body,
       createdAt: nowIso(),
@@ -169,6 +230,16 @@ class ClassroomState {
     }
 
     return message;
+  }
+
+  deleteMessage(messageId) {
+    const index = this.messages.findIndex((message) => message.id === messageId);
+    if (index === -1) {
+      throw new Error("삭제할 메시지를 찾을 수 없습니다.");
+    }
+
+    const [deleted] = this.messages.splice(index, 1);
+    return deleted;
   }
 
   startPushRound() {
@@ -227,23 +298,71 @@ class ClassroomState {
     this.pushRound = this.createInactiveRound();
   }
 
-  snapshot() {
+  isIpBlocked(rawIpAddress) {
+    const ipAddress = normalizeIpAddress(rawIpAddress);
+    return this.blockedIps.has(ipAddress);
+  }
+
+  blockIp(rawIpAddress, reason = "운영자 차단") {
+    const ipAddress = normalizeIpAddress(rawIpAddress);
+    if (ipAddress === "알 수 없음") {
+      throw new Error("차단할 IP를 확인할 수 없습니다.");
+    }
+
+    const existing = this.blockedIps.get(ipAddress);
+    if (existing) {
+      return existing;
+    }
+
+    const entry = {
+      ipAddress,
+      blockedAt: nowIso(),
+      reason,
+    };
+    this.blockedIps.set(ipAddress, entry);
+    return entry;
+  }
+
+  unblockIp(rawIpAddress) {
+    const ipAddress = normalizeIpAddress(rawIpAddress);
+    if (!this.blockedIps.delete(ipAddress)) {
+      throw new Error("차단 목록에서 IP를 찾을 수 없습니다.");
+    }
+
+    return ipAddress;
+  }
+
+  getBlockedIps() {
+    return Array.from(this.blockedIps.values()).sort((a, b) =>
+      a.blockedAt.localeCompare(b.blockedAt),
+    );
+  }
+
+  snapshot({ includeAdmin = false } = {}) {
     const users = Array.from(this.users.values())
       .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt))
-      .map((user) => ({
-        id: user.socketId,
-        nickname: user.nickname,
-        joinedAt: user.joinedAt,
-        pressed: this.pushRound.active
-          ? this.pushRound.pressed.has(user.socketId)
-          : false,
-      }));
+      .map((user) => {
+        const visibleUser = {
+          id: user.socketId,
+          nickname: user.nickname,
+          joinedAt: user.joinedAt,
+          pressed: this.pushRound.active
+            ? this.pushRound.pressed.has(user.socketId)
+            : false,
+        };
+
+        if (includeAdmin) {
+          visibleUser.ipAddress = user.ipAddress;
+        }
+
+        return visibleUser;
+      });
 
     const pressedCount = this.pushRound.active
       ? users.filter((user) => user.pressed).length
       : 0;
 
-    return {
+    const snapshot = {
       userCount: users.length,
       users,
       messages: [...this.messages],
@@ -256,11 +375,18 @@ class ClassroomState {
         completed: this.isPushComplete(),
       },
     };
+
+    if (includeAdmin) {
+      snapshot.blockedIps = this.getBlockedIps();
+    }
+
+    return snapshot;
   }
 }
 
 module.exports = {
   ClassroomState,
+  normalizeIpAddress,
   normalizeNickname,
   normalizeMessage,
 };

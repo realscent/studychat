@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>버튼 푸쉬 사이트</title>
+    <title>신성대 스마트드론건설</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -14,7 +14,7 @@
           <span></span>
           <span></span>
         </div>
-        <h1 id="site-title">버튼 푸쉬 사이트</h1>
+        <h1 id="site-title">신성대 스마트드론건설</h1>
 
         <form id="user-form" class="entry-form">
           <label for="nickname">닉네임</label>
@@ -40,7 +40,7 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">LIVE CLASSROOM</p>
-          <h1>버튼 푸쉬 사이트</h1>
+          <h1>신성대 스마트드론건설</h1>
         </div>
         <div class="topbar-actions">
           <span id="role-chip" class="role-chip">사용자</span>
@@ -60,9 +60,18 @@
 
         <section class="activity-panel" aria-label="실시간 채팅">
           <div id="admin-controls" class="admin-controls" hidden>
-            <button id="start-push-button" class="primary-button" type="button">푸쉬버튼</button>
-            <button id="reset-push-button" class="secondary-button" type="button" hidden>초기화</button>
-            <span id="push-progress" class="progress-text"></span>
+            <div class="admin-actions">
+              <button id="start-push-button" class="primary-button" type="button">푸쉬버튼</button>
+              <button id="reset-push-button" class="secondary-button" type="button" hidden>초기화</button>
+              <span id="push-progress" class="progress-text"></span>
+            </div>
+            <section class="blocklist-panel" aria-labelledby="blocklist-title">
+              <div class="panel-heading compact-heading">
+                <h2 id="blocklist-title">차단 IP</h2>
+                <span id="blocklist-summary">0개</span>
+              </div>
+              <ul id="blocklist" class="blocklist"></ul>
+            </section>
           </div>
 
           <section id="push-panel" class="push-panel" hidden>
