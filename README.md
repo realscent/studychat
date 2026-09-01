@@ -25,6 +25,34 @@ npm start
 
 기본 운영자 비밀번호는 `admin1234`입니다. 실제 사용 시 반드시 `ADMIN_PASSWORD` 환경 변수로 변경하세요.
 
+## 교실 LAN에서 바로 사용
+
+교사 PC에서 서버를 실행한 뒤 같은 교실 네트워크에 있는 학생들은 교사 PC의 IPv4 주소로 접속하면 됩니다.
+
+```powershell
+ipconfig
+```
+
+예를 들어 교사 PC의 IPv4 주소가 `10.1.3.132`라면 학생들은 아래 주소로 접속합니다.
+
+```text
+http://10.1.3.132:3000
+```
+
+학생 PC에서 접속이 안 되면 Windows 방화벽에서 TCP `3000` 포트 인바운드 허용이 필요할 수 있습니다.
+
+## GitHub Pages로 바로 호스팅할 수 없는 이유
+
+이 앱은 실시간 접속자 수, 닉네임 목록, 채팅, 푸쉬 상태를 서버 메모리에서 관리하고 Socket.IO로 즉시 전송합니다.
+
+GitHub Pages는 HTML, CSS, JavaScript 같은 정적 파일을 올리는 용도라 Node 서버를 실행하지 못합니다. 그래서 이 프로젝트를 GitHub Pages에 그대로 올리면 화면 파일은 보일 수 있어도 실시간 서버 기능은 동작하지 않습니다.
+
+아무 곳에서나 접속하려면 아래 중 하나가 필요합니다.
+
+- Render, Railway, Fly.io, VPS 같은 Node 서버 호스팅
+- Jenkins가 배포할 수 있는 공개 서버
+- Firebase/Supabase 같은 실시간 백엔드로 구조 변경 후 GitHub Pages 정적 호스팅
+
 ## Docker 실행
 
 ```powershell
