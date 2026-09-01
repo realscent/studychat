@@ -1,0 +1,11 @@
+services:
+  button-push-site:
+    build: .
+    image: button-push-site:latest
+    container_name: button-push-site
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin1234}
+    ports:
+      - "3000:3000"

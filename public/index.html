@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>버튼 푸쉬 사이트</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div id="join-screen" class="auth-shell">
+      <section class="auth-panel" aria-labelledby="site-title">
+        <div class="auth-mark" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <h1 id="site-title">버튼 푸쉬 사이트</h1>
+
+        <form id="user-form" class="entry-form">
+          <label for="nickname">닉네임</label>
+          <div class="inline-field">
+            <input id="nickname" name="nickname" autocomplete="nickname" maxlength="20" required>
+            <button type="submit">입장</button>
+          </div>
+        </form>
+
+        <form id="admin-form" class="entry-form admin-entry">
+          <label for="admin-password">운영자 비밀번호</label>
+          <div class="inline-field">
+            <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+            <button type="submit">로그인</button>
+          </div>
+        </form>
+
+        <p id="entry-error" class="error-text" role="alert"></p>
+      </section>
+    </div>
+
+    <div id="app" class="app-shell" hidden>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">LIVE CLASSROOM</p>
+          <h1>버튼 푸쉬 사이트</h1>
+        </div>
+        <div class="topbar-actions">
+          <span id="role-chip" class="role-chip">사용자</span>
+          <span id="count-chip" class="count-chip">0명 접속</span>
+          <button id="leave-button" class="ghost-button" type="button">나가기</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="presence-panel" aria-labelledby="presence-title">
+          <div class="panel-heading">
+            <h2 id="presence-title">접속 목록</h2>
+            <span id="list-summary">0명</span>
+          </div>
+          <ul id="user-list" class="user-list"></ul>
+        </aside>
+
+        <section class="activity-panel" aria-label="실시간 채팅">
+          <div id="admin-controls" class="admin-controls" hidden>
+            <button id="start-push-button" class="primary-button" type="button">푸쉬버튼</button>
+            <button id="reset-push-button" class="secondary-button" type="button" hidden>초기화</button>
+            <span id="push-progress" class="progress-text"></span>
+          </div>
+
+          <section id="push-panel" class="push-panel" hidden>
+            <div>
+              <p class="eyebrow">PUSH</p>
+              <h2 id="push-title">푸쉬버튼 진행 중</h2>
+              <p id="push-description"></p>
+            </div>
+            <button id="press-push-button" class="primary-button" type="button">완료했습니다</button>
+          </section>
+
+          <div id="messages" class="messages" aria-live="polite"></div>
+
+          <form id="chat-form" class="chat-form">
+            <input id="chat-input" name="message" maxlength="500" autocomplete="off" placeholder="메시지 입력" required>
+            <button type="submit">전송</button>
+          </form>
+          <p id="room-error" class="error-text" role="alert"></p>
+        </section>
+      </main>
+    </div>
+
+    <div id="complete-modal" class="modal-backdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="complete-title">
+        <h2 id="complete-title">모두 완료</h2>
+        <p id="complete-message">접속한 모든 사용자가 푸쉬버튼을 눌렀습니다.</p>
+        <button id="complete-ok-button" class="primary-button" type="button">OK</button>
+      </section>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
