@@ -174,6 +174,26 @@ test("chat messages can contain attachments without text", () => {
   assert.equal(message.attachments[0].originalName, "자료.pdf");
 });
 
+test("chat messages keep up to twelve grouped attachments", () => {
+  const state = new ClassroomState();
+  state.addUser("user-1", "학생1", "10.1.3.10");
+
+  const message = state.addChatMessage({
+    socketId: "user-1",
+    attachments: Array.from({ length: 13 }, (_, index) => ({
+      id: `file-${index + 1}`,
+      originalName: `사진-${index + 1}.jpg`,
+      mimeType: "image/jpeg",
+      size: 1024,
+      url: `/uploads/file-${index + 1}.jpg`,
+      kind: "image",
+    })),
+  });
+
+  assert.equal(message.attachments.length, 12);
+  assert.equal(message.attachments[11].originalName, "사진-12.jpg");
+});
+
 test("push round tracks waiting and completed users", () => {
   const state = new ClassroomState();
   state.addUser("user-1", "학생1");

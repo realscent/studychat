@@ -545,6 +545,20 @@ button:disabled {
   line-height: 1.48;
 }
 
+.message-more-button {
+  margin-top: 6px;
+  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  color: var(--accent-dark);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.message-more-button:hover {
+  text-decoration: underline;
+}
+
 .chat-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -570,44 +584,82 @@ button:disabled {
   display: grid;
   gap: 8px;
   margin-top: 8px;
-  max-width: min(380px, 100%);
-}
-
-.attachments.attachment-group {
-  grid-template-columns: repeat(2, minmax(118px, 1fr));
   max-width: min(430px, 100%);
 }
 
-.attachment {
+.attachment-file-row {
   display: grid;
   gap: 5px;
   min-width: 0;
 }
 
+.media-grid {
+  display: grid;
+  gap: 3px;
+  max-width: min(430px, 100%);
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(31, 41, 51, 0.08);
+}
+
+.media-count-1 {
+  max-width: min(340px, 100%);
+}
+
+.media-count-2,
+.media-count-4 {
+  grid-template-columns: repeat(2, minmax(118px, 1fr));
+}
+
+.media-count-3 {
+  grid-template-columns: 2fr 1fr;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  aspect-ratio: 4 / 3;
+}
+
+.media-count-3 .attachment-media:first-child {
+  grid-row: 1 / 3;
+}
+
+.media-count-many {
+  grid-template-columns: repeat(3, minmax(82px, 1fr));
+}
+
 .attachment-media {
   position: relative;
   display: block;
-  width: min(320px, 100%);
+  width: 100%;
   overflow: hidden;
-  border: 1px solid rgba(31, 41, 51, 0.14);
-  border-radius: 8px;
+  border: 0;
+  border-radius: 0;
   padding: 0;
   aspect-ratio: 4 / 3;
   background: #111827;
 }
 
-.attachment-media:hover {
-  border-color: var(--accent);
+.media-count-2 .attachment-media,
+.media-count-4 .attachment-media,
+.media-count-many .attachment-media {
+  aspect-ratio: 1 / 1;
+}
+
+.media-count-3 .attachment-media {
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+.attachment-media:hover::after,
+.attachment-media:focus-visible::after {
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(40, 120, 76, 0.92);
+  content: "";
+  pointer-events: none;
 }
 
 .attachment-media:focus-visible {
   outline: 3px solid rgba(40, 120, 76, 0.28);
   outline-offset: 2px;
-}
-
-.attachment-group .attachment-media {
-  width: 100%;
-  aspect-ratio: 1 / 1;
 }
 
 .attachment-image,
@@ -621,8 +673,14 @@ button:disabled {
   background: #fff;
 }
 
-.attachment-group .attachment-image,
-.attachment-group .attachment-video {
+.media-count-2 .attachment-image,
+.media-count-2 .attachment-video,
+.media-count-3 .attachment-image,
+.media-count-3 .attachment-video,
+.media-count-4 .attachment-image,
+.media-count-4 .attachment-video,
+.media-count-many .attachment-image,
+.media-count-many .attachment-video {
   object-fit: cover;
 }
 
@@ -717,7 +775,7 @@ button:disabled {
 .media-modal {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   width: min(100%, 1040px);
   height: min(100%, 86vh);
 }
@@ -725,18 +783,23 @@ button:disabled {
 .media-stage {
   display: grid;
   min-height: 0;
+  overflow: hidden;
   place-items: center;
+  touch-action: none;
+  user-select: none;
 }
 
 .media-viewer-image,
 .media-viewer-video {
   display: block;
   max-width: 100%;
-  max-height: calc(86vh - 72px);
+  max-height: calc(86vh - 112px);
   border-radius: 8px;
   background: #000;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.38);
   object-fit: contain;
+  transform-origin: center center;
+  will-change: transform;
 }
 
 .media-caption {
@@ -747,6 +810,38 @@ button:disabled {
   font-weight: 800;
   text-align: center;
   overflow-wrap: anywhere;
+}
+
+.media-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.media-toolbar button,
+.media-toolbar span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.media-toolbar button:hover {
+  background: rgba(40, 120, 76, 0.92);
+}
+
+.media-toolbar button:disabled {
+  opacity: 0.42;
 }
 
 .media-close-button,
@@ -846,8 +941,13 @@ button:disabled {
     grid-column: 1 / -1;
   }
 
-  .attachments.attachment-group {
+  .media-count-2,
+  .media-count-4 {
     grid-template-columns: repeat(2, minmax(96px, 1fr));
+  }
+
+  .media-count-many {
+    grid-template-columns: repeat(3, minmax(72px, 1fr));
   }
 
   .media-close-button,

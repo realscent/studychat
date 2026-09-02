@@ -6,6 +6,7 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 const express = require("express");
 const { Server } = require("socket.io");
+const socketIoParser = require("socket.io-parser");
 const { ClassroomState, normalizeIpAddress } = require("./src/state");
 
 const PORT = Number(process.env.PORT || 3000);
@@ -14,7 +15,11 @@ const BLOCKLIST_FILE =
   process.env.BLOCKLIST_FILE || path.join(__dirname, "data", "blocked-ips.json");
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, "data", "uploads");
 const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 50 * 1024 * 1024);
-const MAX_ATTACHMENTS_PER_UPLOAD = 4;
+const MAX_UPLOAD_BATCH_BYTES = Number(
+  process.env.MAX_UPLOAD_BATCH_BYTES || 150 * 1024 * 1024,
+);
+const MAX_ATTACHMENTS_PER_UPLOAD = 12;
+const MAX_SOCKET_ATTACHMENTS = MAX_ATTACHMENTS_PER_UPLOAD * 2;
 const INLINE_MEDIA_EXTENSIONS = new Set([
   ".jpg",
   ".jpeg",
@@ -51,8 +56,21 @@ const app = express();
 app.set("trust proxy", true);
 
 const server = http.createServer(app);
+
+class UploadDecoder extends socketIoParser.Decoder {
+  constructor() {
+    super({ maxAttachments: MAX_SOCKET_ATTACHMENTS });
+  }
+}
+
+const uploadParser = {
+  ...socketIoParser,
+  Decoder: UploadDecoder,
+};
+
 const io = new Server(server, {
-  maxHttpBufferSize: MAX_UPLOAD_BYTES * MAX_ATTACHMENTS_PER_UPLOAD + 1024 * 1024,
+  maxHttpBufferSize: MAX_UPLOAD_BATCH_BYTES + 1024 * 1024,
+  parser: uploadParser,
 });
 const state = new ClassroomState({ blockedIps: loadBlockedIps() });
 
@@ -223,9 +241,19 @@ function saveUploadedFiles(payload) {
   }
 
   const attachments = [];
+  let totalBytes = 0;
   try {
     rawFiles.forEach((filePayload) => {
-      attachments.push(saveUploadedFile(filePayload));
+      const attachment = saveUploadedFile(filePayload);
+      attachments.push(attachment);
+      totalBytes += attachment.size;
+      if (totalBytes > MAX_UPLOAD_BATCH_BYTES) {
+        throw new Error(
+          `한 번에 보낼 수 있는 파일 묶음은 ${Math.floor(
+            MAX_UPLOAD_BATCH_BYTES / 1024 / 1024,
+          )}MB 이하입니다.`,
+        );
+      }
     });
     return attachments;
   } catch (error) {

@@ -449,16 +449,33 @@ test("users can upload attachments into chat messages", async (t) => {
         type: "video/mp4",
         file: Buffer.from("video bytes"),
       },
+      {
+        name: "photo-1.jpg",
+        type: "image/jpeg",
+        file: Buffer.from("image bytes"),
+      },
+      {
+        name: "photo-2.png",
+        type: "image/png",
+        file: Buffer.from("image bytes"),
+      },
+      {
+        name: "photo-3.webp",
+        type: "image/webp",
+        file: Buffer.from("image bytes"),
+      },
     ],
   });
 
   assert.equal(uploadResponse.ok, true);
   assert.equal(uploadResponse.message.body, "자료입니다");
-  assert.equal(uploadResponse.message.attachments.length, 2);
+  assert.equal(uploadResponse.message.attachments.length, 5);
   assert.equal(uploadResponse.message.attachments[0].originalName, "hello.txt");
   assert.equal(uploadResponse.message.attachments[0].kind, "file");
   assert.equal(uploadResponse.message.attachments[1].originalName, "demo.mp4");
   assert.equal(uploadResponse.message.attachments[1].kind, "video");
+  assert.equal(uploadResponse.message.attachments[2].originalName, "photo-1.jpg");
+  assert.equal(uploadResponse.message.attachments[2].kind, "image");
 
   const download = await fetch(`${url}${uploadResponse.message.attachments[0].url}`);
   assert.equal(download.status, 200);
@@ -468,4 +485,18 @@ test("users can upload attachments into chat messages", async (t) => {
   const video = await fetch(`${url}${uploadResponse.message.attachments[1].url}`);
   assert.equal(video.status, 200);
   assert.equal(video.headers.get("content-disposition"), null);
+
+  const image = await fetch(`${url}${uploadResponse.message.attachments[2].url}`);
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get("content-disposition"), null);
+
+  const tooManyResponse = await emitWithAck(user, "file:upload", {
+    files: Array.from({ length: 13 }, (_, index) => ({
+      name: `photo-${index + 1}.jpg`,
+      type: "image/jpeg",
+      file: Buffer.from("image bytes"),
+    })),
+  });
+  assert.equal(tooManyResponse.ok, false);
+  assert.match(tooManyResponse.error, /12개/);
 });

@@ -40,12 +40,21 @@ const mediaCaption = document.querySelector("#media-caption");
 const mediaCloseButton = document.querySelector("#media-close-button");
 const mediaPrevButton = document.querySelector("#media-prev-button");
 const mediaNextButton = document.querySelector("#media-next-button");
+const mediaZoomOutButton = document.querySelector("#media-zoom-out-button");
+const mediaZoomInButton = document.querySelector("#media-zoom-in-button");
+const mediaResetButton = document.querySelector("#media-reset-button");
+const mediaZoomValue = document.querySelector("#media-zoom-value");
 const BROWSER_ID_KEY = "studychat.browserClientId";
 const NICKNAME_KEY = "studychat.nickname";
 const SESSION_ROLE_KEY = "studychat.sessionRole";
 const ADMIN_SESSION_TOKEN_KEY = "studychat.adminSessionToken";
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-const MAX_FILES_PER_MESSAGE = 4;
+const MAX_UPLOAD_BATCH_BYTES = 150 * 1024 * 1024;
+const MAX_FILES_PER_MESSAGE = 12;
+const MESSAGE_PREVIEW_LENGTH = 220;
+const MIN_MEDIA_ZOOM = 0.5;
+const MAX_MEDIA_ZOOM = 6;
+const MEDIA_ZOOM_STEP = 0.25;
 
 let role = null;
 let myUserId = null;
@@ -55,6 +64,11 @@ let autoResumeAttempted = false;
 let isLeaving = false;
 let mediaViewerItems = [];
 let mediaViewerIndex = 0;
+let mediaZoom = 1;
+let mediaOffsetX = 0;
+let mediaOffsetY = 0;
+let mediaDrag = null;
+const expandedMessageIds = new Set();
 
 function createBrowserClientId() {
   if (window.crypto?.randomUUID) {
@@ -167,9 +181,50 @@ function getMediaAttachmentsForMessage(messageId) {
   return (message?.attachments || []).filter(isMediaAttachment);
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function resetMediaViewport() {
+  mediaZoom = 1;
+  mediaOffsetX = 0;
+  mediaOffsetY = 0;
+  mediaDrag = null;
+  applyMediaTransform();
+}
+
+function applyMediaTransform() {
+  const media = mediaStage.querySelector(".media-viewer-image, .media-viewer-video");
+  if (media) {
+    media.style.transform = `translate3d(${mediaOffsetX}px, ${mediaOffsetY}px, 0) scale(${mediaZoom})`;
+    media.style.cursor = mediaZoom > 1 ? "grab" : "zoom-in";
+  }
+
+  mediaStage.dataset.zoomed = mediaZoom > 1 ? "true" : "false";
+  mediaZoomValue.textContent = `${Math.round(mediaZoom * 100)}%`;
+  mediaZoomOutButton.disabled = mediaZoom <= MIN_MEDIA_ZOOM;
+  mediaZoomInButton.disabled = mediaZoom >= MAX_MEDIA_ZOOM;
+}
+
+function setMediaZoom(nextZoom) {
+  const previousZoom = mediaZoom;
+  mediaZoom = clamp(Number(nextZoom) || 1, MIN_MEDIA_ZOOM, MAX_MEDIA_ZOOM);
+
+  if (mediaZoom <= 1) {
+    mediaOffsetX = 0;
+    mediaOffsetY = 0;
+  } else if (previousZoom <= 1) {
+    mediaOffsetX = 0;
+    mediaOffsetY = 0;
+  }
+
+  applyMediaTransform();
+}
+
 function closeMediaViewer() {
   mediaViewerItems = [];
   mediaViewerIndex = 0;
+  resetMediaViewport();
   mediaStage.replaceChildren();
   mediaModal.hidden = true;
 }
@@ -181,6 +236,7 @@ function renderMediaViewer() {
     return;
   }
 
+  resetMediaViewport();
   mediaStage.replaceChildren();
 
   if (attachment.kind === "video") {
@@ -197,9 +253,11 @@ function renderMediaViewer() {
     image.className = "media-viewer-image";
     image.src = attachment.url;
     image.alt = attachment.originalName || "첨부 이미지";
+    image.draggable = false;
     mediaStage.append(image);
   }
 
+  applyMediaTransform();
   mediaCaption.textContent = `${attachment.originalName || "첨부파일"} · ${formatFileSize(
     attachment.size,
   )} · ${mediaViewerIndex + 1}/${mediaViewerItems.length}`;
@@ -227,6 +285,48 @@ function moveMediaViewer(delta) {
   mediaViewerIndex =
     (mediaViewerIndex + delta + mediaViewerItems.length) % mediaViewerItems.length;
   renderMediaViewer();
+}
+
+function startMediaDrag(event) {
+  if (event.button !== 0 || mediaModal.hidden || mediaZoom <= 1) {
+    return;
+  }
+
+  const media = event.target.closest(".media-viewer-image, .media-viewer-video");
+  if (!media) {
+    return;
+  }
+
+  mediaDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    offsetX: mediaOffsetX,
+    offsetY: mediaOffsetY,
+  };
+  media.style.cursor = "grabbing";
+  mediaStage.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function moveMediaDrag(event) {
+  if (!mediaDrag || event.pointerId !== mediaDrag.pointerId) {
+    return;
+  }
+
+  mediaOffsetX = mediaDrag.offsetX + event.clientX - mediaDrag.startX;
+  mediaOffsetY = mediaDrag.offsetY + event.clientY - mediaDrag.startY;
+  applyMediaTransform();
+}
+
+function endMediaDrag(event) {
+  if (!mediaDrag || event.pointerId !== mediaDrag.pointerId) {
+    return;
+  }
+
+  mediaDrag = null;
+  mediaStage.releasePointerCapture(event.pointerId);
+  applyMediaTransform();
 }
 
 function enterRoom(nextRole, snapshot) {
@@ -335,47 +435,40 @@ function renderBlocklist(snapshot) {
   });
 }
 
-function renderAttachment(attachment, messageId, mediaIndex = -1) {
-  const wrapper = createElement("div", "attachment");
+function renderMediaAttachment(attachment, messageId, mediaIndex) {
+  const button = createElement("button", "attachment-media");
+  button.type = "button";
+  button.dataset.mediaMessageId = messageId;
+  button.dataset.mediaIndex = String(mediaIndex);
+  button.setAttribute(
+    "aria-label",
+    `${attachment.originalName || "첨부 미디어"} 크게 보기`,
+  );
 
-  if (isMediaAttachment(attachment)) {
-    const button = createElement("button", "attachment-media");
-    button.type = "button";
-    button.dataset.mediaMessageId = messageId;
-    button.dataset.mediaIndex = String(mediaIndex);
-    button.setAttribute(
-      "aria-label",
-      `${attachment.originalName || "첨부 미디어"} 크게 보기`,
-    );
-
-    if (attachment.kind === "video") {
-      const video = document.createElement("video");
-      video.className = "attachment-video";
-      video.src = attachment.url;
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = "metadata";
-      const badge = createElement("span", "video-badge", "▶");
-      badge.setAttribute("aria-hidden", "true");
-      button.append(video, badge);
-    } else {
-      const image = document.createElement("img");
-      image.className = "attachment-image";
-      image.src = attachment.url;
-      image.alt = attachment.originalName || "첨부 이미지";
-      image.loading = "lazy";
-      button.append(image);
-    }
-
-    const caption = createElement(
-      "span",
-      "attachment-caption",
-      `${attachment.originalName || "미디어"} · ${formatFileSize(attachment.size)}`,
-    );
-    wrapper.append(button, caption);
-    return wrapper;
+  if (attachment.kind === "video") {
+    const video = document.createElement("video");
+    video.className = "attachment-video";
+    video.src = attachment.url;
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    const badge = createElement("span", "video-badge", "▶");
+    badge.setAttribute("aria-hidden", "true");
+    button.append(video, badge);
+  } else {
+    const image = document.createElement("img");
+    image.className = "attachment-image";
+    image.src = attachment.url;
+    image.alt = attachment.originalName || "첨부 이미지";
+    image.loading = "lazy";
+    button.append(image);
   }
 
+  return button;
+}
+
+function renderFileAttachment(attachment) {
+  const wrapper = createElement("div", "attachment-file-row");
   const link = createElement("a", "attachment-file");
   link.href = attachment.url;
   link.target = "_blank";
@@ -396,20 +489,69 @@ function renderAttachment(attachment, messageId, mediaIndex = -1) {
 function renderAttachments(attachments = [], messageId) {
   const visibleAttachments = attachments.filter((attachment) => attachment?.url);
   const list = createElement("div", "attachments");
-  if (visibleAttachments.length > 1) {
-    list.classList.add("attachment-group");
+  const mediaAttachments = visibleAttachments.filter(isMediaAttachment);
+  const fileAttachments = visibleAttachments.filter(
+    (attachment) => !isMediaAttachment(attachment),
+  );
+
+  if (mediaAttachments.length) {
+    const countClass =
+      mediaAttachments.length > 4 ? "many" : String(mediaAttachments.length);
+    const mediaGrid = createElement("div", `media-grid media-count-${countClass}`);
+    mediaGrid.dataset.mediaCount = String(mediaAttachments.length);
+    mediaAttachments.forEach((attachment, index) => {
+      mediaGrid.append(renderMediaAttachment(attachment, messageId, index));
+    });
+    list.append(mediaGrid);
+
+    if (mediaAttachments.length === 1) {
+      const attachment = mediaAttachments[0];
+      list.append(
+        createElement(
+          "span",
+          "attachment-caption",
+          `${attachment.originalName || "미디어"} · ${formatFileSize(attachment.size)}`,
+        ),
+      );
+    }
   }
 
-  let mediaIndex = 0;
-  visibleAttachments.forEach((attachment) => {
-    const currentMediaIndex = isMediaAttachment(attachment) ? mediaIndex : -1;
-    if (isMediaAttachment(attachment)) {
-      mediaIndex += 1;
-    }
-    list.append(renderAttachment(attachment, messageId, currentMediaIndex));
+  fileAttachments.forEach((attachment) => {
+    list.append(renderFileAttachment(attachment));
   });
 
   return list;
+}
+
+function renderMessageBody(message) {
+  const expanded = expandedMessageIds.has(message.id);
+  const isLong = message.body.length > MESSAGE_PREVIEW_LENGTH;
+  const bodyText =
+    isLong && !expanded
+      ? `${message.body.slice(0, MESSAGE_PREVIEW_LENGTH).trimEnd()}...`
+      : message.body;
+  const fragment = document.createDocumentFragment();
+  const body = createElement("div", "message-body", bodyText);
+  body.id = `message-body-${message.id}`;
+  if (isLong) {
+    body.classList.add("message-body-collapsed");
+  }
+  fragment.append(body);
+
+  if (isLong) {
+    const toggleButton = createElement(
+      "button",
+      "message-more-button",
+      expanded ? "접기" : "더보기",
+    );
+    toggleButton.type = "button";
+    toggleButton.dataset.toggleMessageId = message.id;
+    toggleButton.setAttribute("aria-controls", body.id);
+    toggleButton.setAttribute("aria-expanded", String(expanded));
+    fragment.append(toggleButton);
+  }
+
+  return fragment;
 }
 
 function renderMessages(snapshot) {
@@ -445,7 +587,7 @@ function renderMessages(snapshot) {
         );
         row.append(meta);
         if (message.body) {
-          row.append(createElement("div", "message-body", message.body));
+          row.append(renderMessageBody(message));
         }
         if (message.attachments?.length) {
           row.append(renderAttachments(message.attachments, message.id));
@@ -648,6 +790,39 @@ async function uploadFileBatch(fileBatch, body = "", batchIndex = 0) {
   });
 }
 
+function createFileBatches(files) {
+  const batches = [];
+  let batch = [];
+  let batchSize = 0;
+
+  files.forEach((file) => {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      throw new Error(
+        `${file.name || "파일"}은 ${formatFileSize(MAX_UPLOAD_BYTES)} 이하만 업로드할 수 있습니다.`,
+      );
+    }
+
+    const shouldStartNextBatch =
+      batch.length >= MAX_FILES_PER_MESSAGE ||
+      (batch.length > 0 && batchSize + file.size > MAX_UPLOAD_BATCH_BYTES);
+
+    if (shouldStartNextBatch) {
+      batches.push(batch);
+      batch = [];
+      batchSize = 0;
+    }
+
+    batch.push(file);
+    batchSize += file.size;
+  });
+
+  if (batch.length) {
+    batches.push(batch);
+  }
+
+  return batches;
+}
+
 async function sendFiles(files, body = "") {
   const selectedFiles = Array.from(files || []);
   if (selectedFiles.length === 0) {
@@ -666,17 +841,17 @@ async function sendFiles(files, body = "") {
 
   let ok = true;
   try {
-    for (let index = 0; index < selectedFiles.length; index += MAX_FILES_PER_MESSAGE) {
-      const batch = selectedFiles.slice(index, index + MAX_FILES_PER_MESSAGE);
-      const batchNumber = Math.floor(index / MAX_FILES_PER_MESSAGE) + 1;
-      const totalBatches = Math.ceil(selectedFiles.length / MAX_FILES_PER_MESSAGE);
+    const batches = createFileBatches(selectedFiles);
+    for (const [index, batch] of batches.entries()) {
+      const batchNumber = index + 1;
+      const totalBatches = batches.length;
       if (totalBatches > 1) {
         setUploadStatus(`${batchNumber}/${totalBatches} 묶음 업로드 중입니다.`);
       }
 
       const response = await uploadFileBatch(
         batch,
-        index === 0 ? body : "",
+        batchNumber === 1 ? body : "",
         batchNumber - 1,
       );
       if (!response.ok) {
@@ -857,6 +1032,18 @@ blocklist.addEventListener("click", async (event) => {
 });
 
 messages.addEventListener("click", (event) => {
+  const toggleButton = event.target.closest("[data-toggle-message-id]");
+  if (toggleButton) {
+    const messageId = toggleButton.dataset.toggleMessageId;
+    if (expandedMessageIds.has(messageId)) {
+      expandedMessageIds.delete(messageId);
+    } else {
+      expandedMessageIds.add(messageId);
+    }
+    renderMessages(latestState);
+    return;
+  }
+
   const trigger = event.target.closest("[data-media-message-id]");
   if (!trigger) {
     return;
@@ -899,6 +1086,29 @@ leaveButton.addEventListener("click", async () => {
 mediaCloseButton.addEventListener("click", closeMediaViewer);
 mediaPrevButton.addEventListener("click", () => moveMediaViewer(-1));
 mediaNextButton.addEventListener("click", () => moveMediaViewer(1));
+mediaZoomOutButton.addEventListener("click", () => {
+  setMediaZoom(mediaZoom - MEDIA_ZOOM_STEP);
+});
+mediaZoomInButton.addEventListener("click", () => {
+  setMediaZoom(mediaZoom + MEDIA_ZOOM_STEP);
+});
+mediaResetButton.addEventListener("click", resetMediaViewport);
+mediaStage.addEventListener(
+  "wheel",
+  (event) => {
+    if (mediaModal.hidden) {
+      return;
+    }
+
+    event.preventDefault();
+    setMediaZoom(mediaZoom + (event.deltaY < 0 ? MEDIA_ZOOM_STEP : -MEDIA_ZOOM_STEP));
+  },
+  { passive: false },
+);
+mediaStage.addEventListener("pointerdown", startMediaDrag);
+mediaStage.addEventListener("pointermove", moveMediaDrag);
+mediaStage.addEventListener("pointerup", endMediaDrag);
+mediaStage.addEventListener("pointercancel", endMediaDrag);
 mediaModal.addEventListener("click", (event) => {
   if (event.target === mediaModal) {
     closeMediaViewer();
@@ -916,6 +1126,12 @@ window.addEventListener("keydown", (event) => {
     moveMediaViewer(-1);
   } else if (event.key === "ArrowRight") {
     moveMediaViewer(1);
+  } else if (event.key === "+" || event.key === "=") {
+    setMediaZoom(mediaZoom + MEDIA_ZOOM_STEP);
+  } else if (event.key === "-") {
+    setMediaZoom(mediaZoom - MEDIA_ZOOM_STEP);
+  } else if (event.key === "0") {
+    resetMediaViewport();
   }
 });
 
