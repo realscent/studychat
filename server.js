@@ -135,18 +135,23 @@ io.on("connection", (socket) => {
         return;
       }
 
+      const existingUser = state.getUserByClientId(payload?.clientId);
       const user = state.addUser(
         socket.id,
         payload?.nickname,
         socket.data.ipAddress,
+        payload?.clientId,
       );
       socket.data.role = "user";
       socket.join("users");
-      state.addSystemMessage(`${user.nickname}님이 입장했습니다.`);
+      if (!existingUser) {
+        state.addSystemMessage(`${user.nickname}님이 입장했습니다.`);
+      }
       respond(reply, {
         ok: true,
         state: getSnapshotFor(socket),
-        userId: socket.id,
+        userId: user.id,
+        nickname: user.nickname,
       });
       broadcastState();
     } catch (error) {
@@ -249,13 +254,16 @@ io.on("connection", (socket) => {
 
       const affectedUsers = state.getUsersByIp(blocked.ipAddress);
       affectedUsers.forEach((affectedUser) => {
-        const affectedSocket = io.sockets.sockets.get(affectedUser.socketId);
-        state.remove(affectedUser.socketId);
-        affectedSocket?.emit("access:blocked", {
-          message: "운영자에 의해 강퇴되어 접속이 차단되었습니다.",
-          ipAddress: blocked.ipAddress,
+        const socketIds = Array.from(affectedUser.socketIds);
+        state.removeUser(affectedUser.id);
+        socketIds.forEach((socketId) => {
+          const affectedSocket = io.sockets.sockets.get(socketId);
+          affectedSocket?.emit("access:blocked", {
+            message: "운영자에 의해 강퇴되어 접속이 차단되었습니다.",
+            ipAddress: blocked.ipAddress,
+          });
+          affectedSocket?.disconnect(true);
         });
-        affectedSocket?.disconnect(true);
       });
 
       state.addSystemMessage(
@@ -316,6 +324,8 @@ io.on("connection", (socket) => {
     if (removed?.role === "user") {
       state.addSystemMessage(`${removed.user.nickname}님이 나갔습니다.`);
       notifyCompleteIfNeeded();
+      broadcastState();
+    } else if (removed?.role === "user-tab") {
       broadcastState();
     } else if (removed?.role === "admin") {
       broadcastState();

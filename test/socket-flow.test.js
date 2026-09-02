@@ -172,11 +172,21 @@ test("socket flow logs in admin, joins users, and completes a push round", async
       snapshot.users.every((user) => user.ipAddress === "127.0.0.1"),
   );
   assert.equal(
-    (await emitWithAck(user1, "user:join", { nickname: "학생1" })).ok,
+    (
+      await emitWithAck(user1, "user:join", {
+        nickname: "학생1",
+        clientId: "browser-user-1",
+      })
+    ).ok,
     true,
   );
   assert.equal(
-    (await emitWithAck(user2, "user:join", { nickname: "학생2" })).ok,
+    (
+      await emitWithAck(user2, "user:join", {
+        nickname: "학생2",
+        clientId: "browser-user-2",
+      })
+    ).ok,
     true,
   );
   assert.equal((await adminStateWithUsers).blockedIps.length, 0);
@@ -214,6 +224,7 @@ test("admin can delete chat, kick users, block IPs, and unblock IPs", async (t) 
   );
   const joinResponse = await emitWithAck(user, "user:join", {
     nickname: "학생1",
+    clientId: "browser-kick-user",
   });
   assert.equal(joinResponse.ok, true);
 
@@ -244,6 +255,7 @@ test("admin can delete chat, kick users, block IPs, and unblock IPs", async (t) 
 
   const blockedJoin = await emitWithAck(blockedUser, "user:join", {
     nickname: "학생2",
+    clientId: "browser-blocked-user",
   });
   assert.equal(blockedJoin.ok, false);
   assert.match(blockedJoin.error, /차단된 IP/);
@@ -257,7 +269,57 @@ test("admin can delete chat, kick users, block IPs, and unblock IPs", async (t) 
     true,
   );
   assert.equal(
-    (await emitWithAck(blockedUser, "user:join", { nickname: "학생2" })).ok,
+    (
+      await emitWithAck(blockedUser, "user:join", {
+        nickname: "학생2",
+        clientId: "browser-blocked-user",
+      })
+    ).ok,
     true,
   );
+});
+
+test("same browser tabs are counted as one logical user", async (t) => {
+  const port = await getFreePort();
+  const server = await startServer(port);
+  t.after(() => server.kill());
+
+  const url = `http://127.0.0.1:${port}`;
+  const admin = await connect(url);
+  const firstTab = await connect(url);
+  const secondTab = await connect(url);
+  t.after(() => {
+    admin.close();
+    firstTab.close();
+    secondTab.close();
+  });
+
+  assert.equal(
+    (await emitWithAck(admin, "admin:login", { password: "test-password" })).ok,
+    true,
+  );
+
+  const firstJoin = await emitWithAck(firstTab, "user:join", {
+    nickname: "학생1",
+    clientId: "same-browser-user",
+  });
+  assert.equal(firstJoin.ok, true);
+
+  const stateAfterSecondJoin = waitForState(
+    admin,
+    (state) =>
+      state.userCount === 1 &&
+      state.users[0].nickname === "학생1" &&
+      state.users[0].tabCount === 2,
+  );
+  const secondJoin = await emitWithAck(secondTab, "user:join", {
+    nickname: "다른닉네임",
+    clientId: "same-browser-user",
+  });
+  assert.equal(secondJoin.ok, true);
+  assert.equal(secondJoin.userId, firstJoin.userId);
+  assert.equal(secondJoin.nickname, "학생1");
+
+  const snapshot = await stateAfterSecondJoin;
+  assert.equal(snapshot.users[0].ipAddress, "127.0.0.1");
 });

@@ -26,6 +26,39 @@ test("duplicate nicknames are rejected case-insensitively", () => {
   });
 });
 
+test("same client ID is counted as one logical user across tabs", () => {
+  const state = new ClassroomState();
+  const first = state.addUser("socket-1", "학생1", "10.1.3.10", "browser-1");
+  const second = state.addUser("socket-2", "다른닉네임", "10.1.3.10", "browser-1");
+
+  assert.equal(first.id, second.id);
+  assert.equal(second.nickname, "학생1");
+
+  let snapshot = state.snapshot({ includeAdmin: true });
+  assert.equal(snapshot.userCount, 1);
+  assert.equal(snapshot.users[0].tabCount, 2);
+
+  assert.equal(state.remove("socket-1").role, "user-tab");
+  snapshot = state.snapshot({ includeAdmin: true });
+  assert.equal(snapshot.userCount, 1);
+  assert.equal(snapshot.users[0].tabCount, 1);
+
+  assert.equal(state.remove("socket-2").role, "user");
+  assert.equal(state.snapshot().userCount, 0);
+});
+
+test("a push round counts logical users, not duplicate tabs", () => {
+  const state = new ClassroomState();
+  state.addUser("socket-1", "학생1", "10.1.3.10", "browser-1");
+  state.addUser("socket-2", "다른닉네임", "10.1.3.10", "browser-1");
+  state.startPushRound();
+
+  const press = state.markPressed("socket-2");
+  assert.equal(press.shouldNotifyComplete, true);
+  assert.equal(state.snapshot().push.pressedCount, 1);
+  assert.equal(state.snapshot().push.totalCount, 1);
+});
+
 test("admin snapshots include user IPs and blocklist", () => {
   const state = new ClassroomState();
   state.addUser("user-1", "학생1", "::ffff:10.1.3.10");

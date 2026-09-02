@@ -2,13 +2,15 @@
   color-scheme: light;
   --bg: #f5f7fa;
   --panel: #ffffff;
-  --panel-strong: #edf7f4;
+  --panel-strong: #eff7f2;
   --text: #1f2933;
   --muted: #667085;
   --line: #d8dee8;
-  --accent: #1868db;
-  --accent-dark: #0f4fa8;
-  --teal: #0f766e;
+  --accent: #28784c;
+  --accent-dark: #1f5f3c;
+  --teal: #28784c;
+  --gold: #f4e900;
+  --gold-soft: #fff9bf;
   --green-bg: #dff7e8;
   --green-text: #146c3f;
   --red-bg: #ffe3e3;
@@ -31,8 +33,8 @@ body {
   min-height: 100vh;
   margin: 0;
   background:
-    linear-gradient(135deg, rgba(24, 104, 219, 0.12), transparent 34%),
-    linear-gradient(315deg, rgba(15, 118, 110, 0.16), transparent 38%),
+    linear-gradient(135deg, rgba(40, 120, 76, 0.13), transparent 34%),
+    linear-gradient(315deg, rgba(244, 233, 0, 0.2), transparent 38%),
     var(--bg);
   color: var(--text);
 }
@@ -68,30 +70,15 @@ button:disabled {
   box-shadow: var(--shadow);
 }
 
-.auth-mark {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  width: 76px;
-  margin-bottom: 22px;
-}
-
-.auth-mark span {
-  aspect-ratio: 1;
-  border-radius: 8px;
-  background: var(--neutral-bg);
-}
-
-.auth-mark span:nth-child(1) {
-  background: var(--accent);
-}
-
-.auth-mark span:nth-child(2) {
-  background: var(--teal);
-}
-
-.auth-mark span:nth-child(3) {
-  background: #f79009;
+.auth-logo {
+  display: block;
+  width: 112px;
+  height: 112px;
+  margin-bottom: 20px;
+  border: 4px solid #fff;
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 8px 24px rgba(40, 120, 76, 0.2);
 }
 
 .auth-panel h1 {
@@ -138,7 +125,7 @@ button:disabled {
 .inline-field input:focus,
 .chat-form input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(24, 104, 219, 0.14);
+  box-shadow: 0 0 0 3px rgba(40, 120, 76, 0.14);
 }
 
 .inline-field button,
@@ -195,6 +182,23 @@ button:disabled {
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(12px);
+}
+
+.brand-lockup {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brand-logo {
+  width: 48px;
+  height: 48px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 4px 12px rgba(40, 120, 76, 0.18);
 }
 
 .topbar h1 {
@@ -357,6 +361,7 @@ button:disabled {
 
 .nickname,
 .ip-address,
+.tab-count,
 .block-reason {
   min-width: 0;
   overflow: hidden;
@@ -377,6 +382,12 @@ button:disabled {
 .ip-address.strong {
   color: var(--text);
   font-size: 14px;
+  font-weight: 900;
+}
+
+.tab-count {
+  color: var(--accent-dark);
+  font-size: 12px;
   font-weight: 900;
 }
 
@@ -501,7 +512,7 @@ button:disabled {
 
 .message.mine {
   justify-self: end;
-  background: #d9e9ff;
+  background: var(--gold-soft);
 }
 
 .message.admin {

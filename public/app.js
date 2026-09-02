@@ -31,11 +31,47 @@ const leaveButton = document.querySelector("#leave-button");
 const completeModal = document.querySelector("#complete-modal");
 const completeMessage = document.querySelector("#complete-message");
 const completeOkButton = document.querySelector("#complete-ok-button");
+const BROWSER_ID_KEY = "studychat.browserClientId";
+const NICKNAME_KEY = "studychat.nickname";
 
 let role = null;
 let myUserId = null;
 let latestState = null;
 let completeRoundShown = null;
+
+function createBrowserClientId() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+
+  return `browser-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getBrowserClientId() {
+  try {
+    const saved = localStorage.getItem(BROWSER_ID_KEY);
+    if (saved) {
+      return saved;
+    }
+
+    const next = createBrowserClientId();
+    localStorage.setItem(BROWSER_ID_KEY, next);
+    return next;
+  } catch (_error) {
+    return createBrowserClientId();
+  }
+}
+
+const browserClientId = getBrowserClientId();
+
+try {
+  const savedNickname = localStorage.getItem(NICKNAME_KEY);
+  if (savedNickname) {
+    nicknameInput.value = savedNickname;
+  }
+} catch (_error) {
+  // Local storage can be disabled in private browser modes.
+}
 
 function emitWithAck(eventName, payload = {}) {
   return new Promise((resolve) => {
@@ -107,6 +143,9 @@ function renderUsers(snapshot) {
 
     if (role === "admin") {
       main.append(createElement("span", "ip-address", user.ipAddress || "IP 없음"));
+      if (user.tabCount > 1) {
+        main.append(createElement("span", "tab-count", `탭 ${user.tabCount}개`));
+      }
     }
 
     const status = createElement(
@@ -287,6 +326,7 @@ userForm.addEventListener("submit", async (event) => {
 
   const response = await emitWithAck("user:join", {
     nickname: nicknameInput.value,
+    clientId: browserClientId,
   });
 
   if (!response.ok) {
@@ -295,6 +335,14 @@ userForm.addEventListener("submit", async (event) => {
   }
 
   myUserId = response.userId;
+  if (response.nickname) {
+    nicknameInput.value = response.nickname;
+  }
+  try {
+    localStorage.setItem(NICKNAME_KEY, nicknameInput.value);
+  } catch (_error) {
+    // Best effort only.
+  }
   enterRoom("user", response.state);
 });
 

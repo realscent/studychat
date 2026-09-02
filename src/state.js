@@ -3,6 +3,7 @@
 const DEFAULT_MAX_MESSAGES = 100;
 const MAX_NICKNAME_LENGTH = 20;
 const MAX_MESSAGE_LENGTH = 500;
+const CLIENT_ID_PATTERN = /^[a-zA-Z0-9_-]{8,100}$/;
 
 function nowIso() {
   return new Date().toISOString();
@@ -48,6 +49,15 @@ function normalizeIpAddress(input) {
   return address;
 }
 
+function normalizeClientId(input, fallback) {
+  const clientId = String(input ?? "").trim();
+  if (CLIENT_ID_PATTERN.test(clientId)) {
+    return clientId;
+  }
+
+  return String(fallback);
+}
+
 function normalizeBlockedEntry(entry) {
   if (typeof entry === "string") {
     return {
@@ -68,6 +78,7 @@ class ClassroomState {
   constructor({ maxMessages = DEFAULT_MAX_MESSAGES, blockedIps = [] } = {}) {
     this.maxMessages = maxMessages;
     this.users = new Map();
+    this.socketToUserId = new Map();
     this.admins = new Map();
     this.messages = [];
     this.blockedIps = new Map();
@@ -91,10 +102,21 @@ class ClassroomState {
     };
   }
 
-  addUser(socketId, rawNickname, rawIpAddress = "알 수 없음") {
+  addUser(socketId, rawNickname, rawIpAddress = "알 수 없음", rawClientId = null) {
     const ipAddress = normalizeIpAddress(rawIpAddress);
     if (this.isIpBlocked(ipAddress)) {
       throw new Error("차단된 IP입니다. 운영자에게 문의하세요.");
+    }
+
+    const clientId = normalizeClientId(rawClientId, socketId);
+    const existingUser = this.users.get(clientId);
+    if (existingUser) {
+      existingUser.socketIds.add(socketId);
+      existingUser.ipAddress = ipAddress;
+      existingUser.lastSeenAt = nowIso();
+      this.socketToUserId.set(socketId, existingUser.id);
+      this.admins.delete(socketId);
+      return existingUser;
     }
 
     const nickname = normalizeNickname(rawNickname);
@@ -108,23 +130,29 @@ class ClassroomState {
     }
 
     const user = {
-      socketId,
+      id: clientId,
+      clientId,
       nickname,
       ipAddress,
       joinedAt: nowIso(),
+      lastSeenAt: nowIso(),
+      socketIds: new Set([socketId]),
     };
 
-    this.users.set(socketId, user);
+    this.users.set(user.id, user);
+    this.socketToUserId.set(socketId, user.id);
     this.admins.delete(socketId);
 
     if (this.pushRound.active) {
-      this.pushRound.pressed.delete(socketId);
+      this.pushRound.pressed.delete(user.id);
     }
 
     return user;
   }
 
   addAdmin(socketId, name = "운영자", rawIpAddress = "알 수 없음") {
+    this.detachUserSocket(socketId);
+
     const admin = {
       socketId,
       name,
@@ -133,17 +161,37 @@ class ClassroomState {
     };
 
     this.admins.set(socketId, admin);
-    this.users.delete(socketId);
-    this.pushRound.pressed.delete(socketId);
     return admin;
   }
 
+  detachUserSocket(socketId) {
+    const userId = this.socketToUserId.get(socketId);
+    if (!userId) {
+      return null;
+    }
+
+    this.socketToUserId.delete(socketId);
+    const user = this.users.get(userId);
+    if (!user) {
+      return null;
+    }
+
+    user.socketIds.delete(socketId);
+    user.lastSeenAt = nowIso();
+
+    if (user.socketIds.size > 0) {
+      return { role: "user-tab", user };
+    }
+
+    this.users.delete(userId);
+    this.pushRound.pressed.delete(userId);
+    return { role: "user", user };
+  }
+
   remove(socketId) {
-    const user = this.users.get(socketId);
-    if (user) {
-      this.users.delete(socketId);
-      this.pushRound.pressed.delete(socketId);
-      return { role: "user", user };
+    const removedUser = this.detachUserSocket(socketId);
+    if (removedUser) {
+      return removedUser;
     }
 
     const admin = this.admins.get(socketId);
@@ -155,8 +203,21 @@ class ClassroomState {
     return null;
   }
 
+  removeUser(userId) {
+    const user = this.users.get(userId);
+    if (!user) {
+      return null;
+    }
+
+    this.users.delete(userId);
+    this.pushRound.pressed.delete(userId);
+    user.socketIds.forEach((socketId) => this.socketToUserId.delete(socketId));
+    return user;
+  }
+
   getClient(socketId) {
-    const user = this.users.get(socketId);
+    const userId = this.socketToUserId.get(socketId);
+    const user = userId ? this.users.get(userId) : null;
     if (user) {
       return { role: "user", user };
     }
@@ -169,8 +230,13 @@ class ClassroomState {
     return null;
   }
 
-  getUser(socketId) {
-    return this.users.get(socketId) ?? null;
+  getUser(userId) {
+    return this.users.get(userId) ?? null;
+  }
+
+  getUserByClientId(rawClientId) {
+    const clientId = normalizeClientId(rawClientId, "");
+    return this.users.get(clientId) ?? null;
   }
 
   getUsersByIp(rawIpAddress) {
@@ -192,9 +258,10 @@ class ClassroomState {
     }
 
     const author = client.role === "admin" ? "운영자" : client.user.nickname;
+    const authorId = client.role === "admin" ? socketId : client.user.id;
     return this.addMessage({
       author,
-      authorId: socketId,
+      authorId,
       role: client.role,
       body: normalizedBody,
     });
@@ -264,11 +331,12 @@ class ClassroomState {
       throw new Error("진행 중인 푸쉬가 없습니다.");
     }
 
-    if (!this.users.has(socketId)) {
+    const userId = this.socketToUserId.get(socketId);
+    if (!userId || !this.users.has(userId)) {
       throw new Error("사용자만 누를 수 있습니다.");
     }
 
-    this.pushRound.pressed.add(socketId);
+    this.pushRound.pressed.add(userId);
     return {
       roundId: this.pushRound.id,
       shouldNotifyComplete: this.consumeCompletionIfReady(),
@@ -289,8 +357,8 @@ class ClassroomState {
       return false;
     }
 
-    return Array.from(this.users.keys()).every((socketId) =>
-      this.pushRound.pressed.has(socketId),
+    return Array.from(this.users.keys()).every((userId) =>
+      this.pushRound.pressed.has(userId),
     );
   }
 
@@ -343,12 +411,11 @@ class ClassroomState {
       .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt))
       .map((user) => {
         const visibleUser = {
-          id: user.socketId,
+          id: user.id,
           nickname: user.nickname,
           joinedAt: user.joinedAt,
-          pressed: this.pushRound.active
-            ? this.pushRound.pressed.has(user.socketId)
-            : false,
+          tabCount: user.socketIds.size,
+          pressed: this.pushRound.active ? this.pushRound.pressed.has(user.id) : false,
         };
 
         if (includeAdmin) {
@@ -386,6 +453,7 @@ class ClassroomState {
 
 module.exports = {
   ClassroomState,
+  normalizeClientId,
   normalizeIpAddress,
   normalizeNickname,
   normalizeMessage,
