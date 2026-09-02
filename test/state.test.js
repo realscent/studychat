@@ -150,6 +150,30 @@ test("chat messages can be deleted by id", () => {
   assert.equal(state.snapshot().messages.length, 0);
 });
 
+test("chat messages can contain attachments without text", () => {
+  const state = new ClassroomState();
+  state.addUser("user-1", "학생1", "10.1.3.10");
+
+  const message = state.addChatMessage({
+    socketId: "user-1",
+    body: "",
+    attachments: [
+      {
+        id: "file-1",
+        originalName: "자료.pdf",
+        mimeType: "application/pdf",
+        size: 1024,
+        url: "/uploads/file-1.pdf",
+        kind: "file",
+      },
+    ],
+  });
+
+  assert.equal(message.body, "");
+  assert.equal(message.attachments.length, 1);
+  assert.equal(message.attachments[0].originalName, "자료.pdf");
+});
+
 test("push round tracks waiting and completed users", () => {
   const state = new ClassroomState();
   state.addUser("user-1", "학생1");

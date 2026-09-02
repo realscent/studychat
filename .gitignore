@@ -5,3 +5,4 @@ npm-debug.log*
 dist/
 coverage/
 data/blocked-ips.json
+data/uploads/

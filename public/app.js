@@ -27,6 +27,9 @@ const pressPushButton = document.querySelector("#press-push-button");
 const messages = document.querySelector("#messages");
 const chatForm = document.querySelector("#chat-form");
 const chatInput = document.querySelector("#chat-input");
+const fileInput = document.querySelector("#file-input");
+const attachButton = document.querySelector("#attach-button");
+const uploadStatus = document.querySelector("#upload-status");
 const leaveButton = document.querySelector("#leave-button");
 const completeModal = document.querySelector("#complete-modal");
 const completeMessage = document.querySelector("#complete-message");
@@ -35,6 +38,7 @@ const BROWSER_ID_KEY = "studychat.browserClientId";
 const NICKNAME_KEY = "studychat.nickname";
 const SESSION_ROLE_KEY = "studychat.sessionRole";
 const ADMIN_SESSION_TOKEN_KEY = "studychat.adminSessionToken";
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 let role = null;
 let myUserId = null;
@@ -126,6 +130,23 @@ function setEntryError(message = "") {
 
 function setRoomError(message = "") {
   roomError.textContent = message;
+}
+
+function setUploadStatus(message = "") {
+  uploadStatus.textContent = message;
+}
+
+function formatFileSize(size) {
+  const value = Number(size || 0);
+  if (value >= 1024 * 1024) {
+    return `${(value / 1024 / 1024).toFixed(1)}MB`;
+  }
+
+  if (value >= 1024) {
+    return `${Math.ceil(value / 1024)}KB`;
+  }
+
+  return `${value}B`;
 }
 
 function enterRoom(nextRole, snapshot) {
@@ -234,6 +255,55 @@ function renderBlocklist(snapshot) {
   });
 }
 
+function renderAttachment(attachment) {
+  const wrapper = createElement("div", "attachment");
+  const link = createElement("a", null);
+  link.href = attachment.url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.download = attachment.originalName || "첨부파일";
+
+  if (attachment.kind === "image") {
+    const image = document.createElement("img");
+    image.className = "attachment-image";
+    image.src = attachment.url;
+    image.alt = attachment.originalName || "첨부 이미지";
+    image.loading = "lazy";
+    link.append(image);
+
+    const caption = createElement(
+      "span",
+      "attachment-caption",
+      `${attachment.originalName || "이미지"} · ${formatFileSize(attachment.size)}`,
+    );
+    wrapper.append(link, caption);
+    return wrapper;
+  }
+
+  link.className = "attachment-file";
+  link.append(
+    createElement("span", "attachment-icon", "파일"),
+    createElement(
+      "span",
+      "attachment-name",
+      `${attachment.originalName || "첨부파일"} · ${formatFileSize(attachment.size)}`,
+    ),
+  );
+  wrapper.append(link);
+  return wrapper;
+}
+
+function renderAttachments(attachments = []) {
+  const list = createElement("div", "attachments");
+  attachments.forEach((attachment) => {
+    if (attachment?.url) {
+      list.append(renderAttachment(attachment));
+    }
+  });
+
+  return list;
+}
+
 function renderMessages(snapshot) {
   const shouldStickToBottom =
     messages.scrollTop + messages.clientHeight >= messages.scrollHeight - 32;
@@ -265,7 +335,13 @@ function renderMessages(snapshot) {
           createElement("span", null, message.author),
           createElement("span", null, formatTime(message.createdAt)),
         );
-        row.append(meta, createElement("div", "message-body", message.body));
+        row.append(meta);
+        if (message.body) {
+          row.append(createElement("div", "message-body", message.body));
+        }
+        if (message.attachments?.length) {
+          row.append(renderAttachments(message.attachments));
+        }
       }
 
       messages.append(row);
@@ -435,6 +511,57 @@ async function resumeStoredSession() {
   }
 }
 
+async function uploadFile(file, body = "") {
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return {
+      ok: false,
+      error: `${file.name || "파일"}은 10MB 이하만 업로드할 수 있습니다.`,
+    };
+  }
+
+  const buffer = await file.arrayBuffer();
+  return emitWithAck("file:upload", {
+    name: file.name || `clipboard-image-${Date.now()}.png`,
+    type: file.type || "application/octet-stream",
+    size: file.size,
+    body,
+    file: buffer,
+  });
+}
+
+async function sendFiles(files, body = "") {
+  const uploadFiles = Array.from(files || []);
+  if (uploadFiles.length === 0) {
+    return true;
+  }
+
+  if (!role) {
+    setEntryError("먼저 입장하세요.");
+    return false;
+  }
+
+  setRoomError();
+  setUploadStatus(`${uploadFiles.length}개 파일 업로드 중입니다.`);
+  attachButton.disabled = true;
+  chatInput.disabled = true;
+
+  let ok = true;
+  for (const [index, file] of uploadFiles.entries()) {
+    const response = await uploadFile(file, index === 0 ? body : "");
+    if (!response.ok) {
+      setRoomError(response.error);
+      ok = false;
+      break;
+    }
+  }
+
+  setUploadStatus();
+  attachButton.disabled = false;
+  chatInput.disabled = false;
+  chatInput.focus();
+  return ok;
+}
+
 userForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   setEntryError();
@@ -487,6 +614,37 @@ chatForm.addEventListener("submit", async (event) => {
   const response = await emitWithAck("chat:send", { body });
   if (!response.ok) {
     setRoomError(response.error);
+    chatInput.value = body;
+  }
+});
+
+attachButton.addEventListener("click", () => {
+  fileInput.click();
+});
+
+fileInput.addEventListener("change", async () => {
+  const files = Array.from(fileInput.files || []);
+  const body = chatInput.value;
+  chatInput.value = "";
+  fileInput.value = "";
+  if (!(await sendFiles(files, body))) {
+    chatInput.value = body;
+  }
+});
+
+chatInput.addEventListener("paste", async (event) => {
+  const pastedImages = Array.from(event.clipboardData?.files || []).filter(
+    (file) => file.type.startsWith("image/"),
+  );
+
+  if (pastedImages.length === 0) {
+    return;
+  }
+
+  event.preventDefault();
+  const body = chatInput.value;
+  chatInput.value = "";
+  if (!(await sendFiles(pastedImages, body))) {
     chatInput.value = body;
   }
 });

@@ -3,6 +3,7 @@
 const DEFAULT_MAX_MESSAGES = 100;
 const MAX_NICKNAME_LENGTH = 20;
 const MAX_MESSAGE_LENGTH = 500;
+const MAX_ATTACHMENTS_PER_MESSAGE = 4;
 const CLIENT_ID_PATTERN = /^[a-zA-Z0-9_-]{8,100}$/;
 
 function nowIso() {
@@ -30,6 +31,21 @@ function normalizeMessage(input) {
   }
 
   return body.slice(0, MAX_MESSAGE_LENGTH);
+}
+
+function normalizeAttachments(input) {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input.slice(0, MAX_ATTACHMENTS_PER_MESSAGE).map((attachment) => ({
+    id: String(attachment?.id ?? ""),
+    originalName: String(attachment?.originalName ?? "첨부파일"),
+    mimeType: String(attachment?.mimeType ?? "application/octet-stream"),
+    size: Number(attachment?.size ?? 0),
+    url: String(attachment?.url ?? ""),
+    kind: String(attachment?.kind ?? "file"),
+  }));
 }
 
 function normalizeIpAddress(input) {
@@ -321,15 +337,16 @@ class ClassroomState {
     );
   }
 
-  addChatMessage({ socketId, body }) {
+  addChatMessage({ socketId, body, attachments = [] }) {
     const client = this.getClient(socketId);
     if (!client) {
       throw new Error("먼저 입장하세요.");
     }
 
     const normalizedBody = normalizeMessage(body);
-    if (!normalizedBody) {
-      throw new Error("메시지를 입력하세요.");
+    const normalizedAttachments = normalizeAttachments(attachments);
+    if (!normalizedBody && normalizedAttachments.length === 0) {
+      throw new Error("메시지나 첨부파일을 입력하세요.");
     }
 
     const author = client.role === "admin" ? "운영자" : client.user.nickname;
@@ -338,7 +355,8 @@ class ClassroomState {
       author,
       authorId,
       role: client.role,
-      body: normalizedBody,
+      body: normalizedBody ?? "",
+      attachments: normalizedAttachments,
     });
   }
 
@@ -356,13 +374,14 @@ class ClassroomState {
     });
   }
 
-  addMessage({ author, authorId, role, body }) {
+  addMessage({ author, authorId, role, body, attachments = [] }) {
     const message = {
       id: `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       author,
       authorId,
       role,
       body,
+      attachments,
       createdAt: nowIso(),
     };
 
@@ -529,6 +548,7 @@ class ClassroomState {
 module.exports = {
   ClassroomState,
   normalizeClientId,
+  normalizeAttachments,
   normalizeIpAddress,
   normalizeNickname,
   normalizeMessage,

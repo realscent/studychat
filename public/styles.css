@@ -545,7 +545,7 @@ button:disabled {
 
 .chat-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   padding: 14px;
   border-top: 1px solid var(--line);
@@ -554,6 +554,75 @@ button:disabled {
 .chat-form input {
   height: 46px;
   padding: 0 14px;
+}
+
+.upload-status {
+  min-height: 18px;
+  margin: -6px 14px 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.attachments {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.attachment {
+  display: grid;
+  gap: 5px;
+}
+
+.attachment-image {
+  display: block;
+  max-width: min(320px, 100%);
+  max-height: 240px;
+  border: 1px solid rgba(31, 41, 51, 0.12);
+  border-radius: 8px;
+  object-fit: contain;
+  background: #fff;
+}
+
+.attachment-caption {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.attachment-file {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  max-width: 360px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.attachment-file:hover {
+  border-color: var(--accent);
+}
+
+.attachment-icon {
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: var(--panel-strong);
+  color: var(--accent-dark);
+  font-size: 12px;
+}
+
+.attachment-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .modal-backdrop {

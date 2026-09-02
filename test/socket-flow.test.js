@@ -26,6 +26,10 @@ function startServer(port) {
       os.tmpdir(),
       `studychat-blocklist-${port}-${Date.now()}.json`,
     );
+    const uploadDir = path.join(
+      os.tmpdir(),
+      `studychat-uploads-${port}-${Date.now()}`,
+    );
 
     const child = spawn(process.execPath, ["server.js"], {
       cwd: path.join(__dirname, ".."),
@@ -34,6 +38,7 @@ function startServer(port) {
         PORT: String(port),
         ADMIN_PASSWORD: "test-password",
         BLOCKLIST_FILE: blocklistFile,
+        UPLOAD_DIR: uploadDir,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -410,4 +415,41 @@ test("stored admin sessions resume in new tabs and block user join", async (t) =
     clientId: "admin-browser",
   });
   assert.equal(joinAfterLeave.ok, true);
+});
+
+test("users can upload attachments into chat messages", async (t) => {
+  const port = await getFreePort();
+  const server = await startServer(port);
+  t.after(() => server.kill());
+
+  const url = `http://127.0.0.1:${port}`;
+  const user = await connect(url);
+  t.after(() => user.close());
+
+  assert.equal(
+    (
+      await emitWithAck(user, "user:join", {
+        nickname: "학생1",
+        clientId: "upload-browser",
+      })
+    ).ok,
+    true,
+  );
+
+  const uploadResponse = await emitWithAck(user, "file:upload", {
+    name: "hello.txt",
+    type: "text/plain",
+    body: "자료입니다",
+    file: Buffer.from("hello file"),
+  });
+
+  assert.equal(uploadResponse.ok, true);
+  assert.equal(uploadResponse.message.body, "자료입니다");
+  assert.equal(uploadResponse.message.attachments.length, 1);
+  assert.equal(uploadResponse.message.attachments[0].originalName, "hello.txt");
+  assert.equal(uploadResponse.message.attachments[0].kind, "file");
+
+  const download = await fetch(`${url}${uploadResponse.message.attachments[0].url}`);
+  assert.equal(download.status, 200);
+  assert.equal(await download.text(), "hello file");
 });

@@ -86,8 +86,11 @@
 
           <form id="chat-form" class="chat-form">
             <input id="chat-input" name="message" maxlength="500" autocomplete="off" placeholder="메시지 입력" required>
+            <input id="file-input" type="file" multiple hidden>
+            <button id="attach-button" class="secondary-button" type="button">첨부</button>
             <button type="submit">전송</button>
           </form>
+          <p id="upload-status" class="upload-status" aria-live="polite"></p>
           <p id="room-error" class="error-text" role="alert"></p>
         </section>
       </main>
