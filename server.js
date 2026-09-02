@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const http = require("node:http");
+const crypto = require("node:crypto");
 const path = require("node:path");
 const express = require("express");
 const { Server } = require("socket.io");
@@ -87,6 +88,17 @@ function persistBlocklist() {
   saveBlockedIps(state.getBlockedIps());
 }
 
+function createSessionToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function disconnectSockets(socketIds) {
+  socketIds.forEach((socketId) => {
+    const target = io.sockets.sockets.get(socketId);
+    target?.disconnect(true);
+  });
+}
+
 function notifyCompleteIfNeeded() {
   if (state.consumeCompletionIfReady()) {
     const snapshot = state.snapshot();
@@ -129,6 +141,113 @@ io.on("connection", (socket) => {
 
   sendState(socket);
 
+  socket.on("session:resume", (payload, reply) => {
+    try {
+      const requestedRole = String(payload?.role ?? "");
+      const clientId = payload?.clientId;
+
+      if (requestedRole === "user") {
+        if (rejectBlockedUser(socket, reply)) {
+          return;
+        }
+
+        const existingUser = state.getUserByClientId(clientId);
+        const user = state.addUser(
+          socket.id,
+          payload?.nickname,
+          socket.data.ipAddress,
+          clientId,
+        );
+        socket.data.role = "user";
+        socket.data.clientId = user.clientId;
+        socket.join("users");
+        if (!existingUser) {
+          state.addSystemMessage(`${user.nickname}님이 입장했습니다.`);
+        }
+        respond(reply, {
+          ok: true,
+          role: "user",
+          state: getSnapshotFor(socket),
+          userId: user.id,
+          nickname: user.nickname,
+        });
+        broadcastState();
+        return;
+      }
+
+      if (requestedRole === "admin") {
+        const existingAdmin = state.getAdminSession(
+          clientId,
+          payload?.adminSessionToken,
+        );
+        if (!existingAdmin) {
+          throw new Error("운영자 세션이 만료되었습니다. 다시 로그인하세요.");
+        }
+
+        const admin = state.addAdmin(
+          socket.id,
+          existingAdmin.name,
+          socket.data.ipAddress,
+          clientId,
+          existingAdmin.sessionToken,
+        );
+        socket.data.role = "admin";
+        socket.data.clientId = admin.clientId;
+        socket.join("admins");
+        respond(reply, {
+          ok: true,
+          role: "admin",
+          state: getSnapshotFor(socket),
+          adminSessionToken: admin.sessionToken,
+        });
+        broadcastState();
+        return;
+      }
+
+      throw new Error("재개할 세션 정보가 없습니다.");
+    } catch (error) {
+      respond(reply, { ok: false, error: error.message });
+    }
+  });
+
+  socket.on("session:leave", (_payload, reply) => {
+    const client = state.getClient(socket.id);
+    if (!client) {
+      respond(reply, { ok: true });
+      return;
+    }
+
+    if (client.role === "user") {
+      const socketIds = Array.from(client.user.socketIds);
+      const removed = state.removeUser(client.user.id);
+      if (removed) {
+        state.addSystemMessage(`${removed.nickname}님이 나갔습니다.`);
+        notifyCompleteIfNeeded();
+      }
+      socketIds.forEach((socketId) => {
+        io.sockets.sockets.get(socketId)?.emit("session:left");
+      });
+      respond(reply, { ok: true });
+      setImmediate(() => disconnectSockets(socketIds));
+      broadcastState();
+      return;
+    }
+
+    if (client.role === "admin") {
+      const socketIds = Array.from(client.admin.socketIds);
+      state.removeAdmin(client.admin.id);
+      socketIds.forEach((socketId) => {
+        io.sockets.sockets.get(socketId)?.emit("session:left");
+      });
+      respond(reply, { ok: true });
+      setImmediate(() => disconnectSockets(socketIds));
+      broadcastState();
+      return;
+    }
+
+    respond(reply, { ok: true });
+  });
+
   socket.on("user:join", (payload, reply) => {
     try {
       if (rejectBlockedUser(socket, reply)) {
@@ -143,6 +262,7 @@ io.on("connection", (socket) => {
         payload?.clientId,
       );
       socket.data.role = "user";
+      socket.data.clientId = user.clientId;
       socket.join("users");
       if (!existingUser) {
         state.addSystemMessage(`${user.nickname}님이 입장했습니다.`);
@@ -169,11 +289,26 @@ io.on("connection", (socket) => {
       return;
     }
 
-    state.addAdmin(socket.id, "운영자", socket.data.ipAddress);
-    socket.data.role = "admin";
-    socket.join("admins");
-    respond(reply, { ok: true, state: getSnapshotFor(socket) });
-    broadcastState();
+    try {
+      const admin = state.addAdmin(
+        socket.id,
+        "운영자",
+        socket.data.ipAddress,
+        payload?.clientId,
+        createSessionToken(),
+      );
+      socket.data.role = "admin";
+      socket.data.clientId = admin.clientId;
+      socket.join("admins");
+      respond(reply, {
+        ok: true,
+        state: getSnapshotFor(socket),
+        adminSessionToken: admin.sessionToken,
+      });
+      broadcastState();
+    } catch (error) {
+      respond(reply, { ok: false, error: error.message });
+    }
   });
 
   socket.on("chat:send", (payload, reply) => {
@@ -327,7 +462,7 @@ io.on("connection", (socket) => {
       broadcastState();
     } else if (removed?.role === "user-tab") {
       broadcastState();
-    } else if (removed?.role === "admin") {
+    } else if (removed?.role === "admin-tab") {
       broadcastState();
     }
   });

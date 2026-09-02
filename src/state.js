@@ -80,6 +80,7 @@ class ClassroomState {
     this.users = new Map();
     this.socketToUserId = new Map();
     this.admins = new Map();
+    this.socketToAdminId = new Map();
     this.messages = [];
     this.blockedIps = new Map();
     this.roundSequence = 0;
@@ -109,6 +110,10 @@ class ClassroomState {
     }
 
     const clientId = normalizeClientId(rawClientId, socketId);
+    if (this.admins.has(clientId)) {
+      throw new Error("이미 운영자로 로그인한 브라우저입니다. 나가기 후 사용자로 입장하세요.");
+    }
+
     const existingUser = this.users.get(clientId);
     if (existingUser) {
       existingUser.socketIds.add(socketId);
@@ -150,17 +155,45 @@ class ClassroomState {
     return user;
   }
 
-  addAdmin(socketId, name = "운영자", rawIpAddress = "알 수 없음") {
-    this.detachUserSocket(socketId);
+  addAdmin(
+    socketId,
+    name = "운영자",
+    rawIpAddress = "알 수 없음",
+    rawClientId = null,
+    sessionToken = null,
+  ) {
+    const clientId = normalizeClientId(rawClientId, socketId);
+    if (this.users.has(clientId)) {
+      throw new Error("이미 사용자로 입장한 브라우저입니다. 나가기 후 운영자로 로그인하세요.");
+    }
+
+    const existingAdmin = this.admins.get(clientId);
+    if (existingAdmin) {
+      existingAdmin.socketIds.add(socketId);
+      existingAdmin.ipAddress = normalizeIpAddress(rawIpAddress);
+      existingAdmin.lastSeenAt = nowIso();
+      if (sessionToken) {
+        existingAdmin.sessionToken = sessionToken;
+      }
+      this.socketToAdminId.set(socketId, existingAdmin.id);
+      this.detachUserSocket(socketId);
+      return existingAdmin;
+    }
 
     const admin = {
-      socketId,
+      id: clientId,
+      clientId,
       name,
       ipAddress: normalizeIpAddress(rawIpAddress),
       joinedAt: nowIso(),
+      lastSeenAt: nowIso(),
+      sessionToken,
+      socketIds: new Set([socketId]),
     };
 
-    this.admins.set(socketId, admin);
+    this.admins.set(admin.id, admin);
+    this.socketToAdminId.set(socketId, admin.id);
+    this.detachUserSocket(socketId);
     return admin;
   }
 
@@ -188,16 +221,32 @@ class ClassroomState {
     return { role: "user", user };
   }
 
+  detachAdminSocket(socketId) {
+    const adminId = this.socketToAdminId.get(socketId);
+    if (!adminId) {
+      return null;
+    }
+
+    this.socketToAdminId.delete(socketId);
+    const admin = this.admins.get(adminId);
+    if (!admin) {
+      return null;
+    }
+
+    admin.socketIds.delete(socketId);
+    admin.lastSeenAt = nowIso();
+    return { role: "admin-tab", admin };
+  }
+
   remove(socketId) {
     const removedUser = this.detachUserSocket(socketId);
     if (removedUser) {
       return removedUser;
     }
 
-    const admin = this.admins.get(socketId);
-    if (admin) {
-      this.admins.delete(socketId);
-      return { role: "admin", admin };
+    const removedAdmin = this.detachAdminSocket(socketId);
+    if (removedAdmin) {
+      return removedAdmin;
     }
 
     return null;
@@ -215,6 +264,17 @@ class ClassroomState {
     return user;
   }
 
+  removeAdmin(adminId) {
+    const admin = this.admins.get(adminId);
+    if (!admin) {
+      return null;
+    }
+
+    this.admins.delete(adminId);
+    admin.socketIds.forEach((socketId) => this.socketToAdminId.delete(socketId));
+    return admin;
+  }
+
   getClient(socketId) {
     const userId = this.socketToUserId.get(socketId);
     const user = userId ? this.users.get(userId) : null;
@@ -222,7 +282,8 @@ class ClassroomState {
       return { role: "user", user };
     }
 
-    const admin = this.admins.get(socketId);
+    const adminId = this.socketToAdminId.get(socketId);
+    const admin = adminId ? this.admins.get(adminId) : null;
     if (admin) {
       return { role: "admin", admin };
     }
@@ -237,6 +298,20 @@ class ClassroomState {
   getUserByClientId(rawClientId) {
     const clientId = normalizeClientId(rawClientId, "");
     return this.users.get(clientId) ?? null;
+  }
+
+  getAdminByClientId(rawClientId) {
+    const clientId = normalizeClientId(rawClientId, "");
+    return this.admins.get(clientId) ?? null;
+  }
+
+  getAdminSession(rawClientId, sessionToken) {
+    const admin = this.getAdminByClientId(rawClientId);
+    if (!admin || !admin.sessionToken || admin.sessionToken !== sessionToken) {
+      return null;
+    }
+
+    return admin;
   }
 
   getUsersByIp(rawIpAddress) {
@@ -258,7 +333,7 @@ class ClassroomState {
     }
 
     const author = client.role === "admin" ? "운영자" : client.user.nickname;
-    const authorId = client.role === "admin" ? socketId : client.user.id;
+    const authorId = client.role === "admin" ? client.admin.id : client.user.id;
     return this.addMessage({
       author,
       authorId,

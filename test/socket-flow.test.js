@@ -323,3 +323,91 @@ test("same browser tabs are counted as one logical user", async (t) => {
   const snapshot = await stateAfterSecondJoin;
   assert.equal(snapshot.users[0].ipAddress, "127.0.0.1");
 });
+
+test("stored user sessions resume in new tabs and block admin login", async (t) => {
+  const port = await getFreePort();
+  const server = await startServer(port);
+  t.after(() => server.kill());
+
+  const url = `http://127.0.0.1:${port}`;
+  const firstTab = await connect(url);
+  const secondTab = await connect(url);
+  const adminAttempt = await connect(url);
+  t.after(() => {
+    firstTab.close();
+    secondTab.close();
+    adminAttempt.close();
+  });
+
+  const firstJoin = await emitWithAck(firstTab, "user:join", {
+    nickname: "학생1",
+    clientId: "locked-browser",
+  });
+  assert.equal(firstJoin.ok, true);
+
+  const resumedJoin = await emitWithAck(secondTab, "session:resume", {
+    role: "user",
+    nickname: "다른닉네임",
+    clientId: "locked-browser",
+  });
+  assert.equal(resumedJoin.ok, true);
+  assert.equal(resumedJoin.userId, firstJoin.userId);
+  assert.equal(resumedJoin.nickname, "학생1");
+  assert.equal(resumedJoin.state.userCount, 1);
+  assert.equal(resumedJoin.state.users[0].tabCount, 2);
+
+  const blockedAdminLogin = await emitWithAck(adminAttempt, "admin:login", {
+    password: "test-password",
+    clientId: "locked-browser",
+  });
+  assert.equal(blockedAdminLogin.ok, false);
+  assert.match(blockedAdminLogin.error, /이미 사용자/);
+});
+
+test("stored admin sessions resume in new tabs and block user join", async (t) => {
+  const port = await getFreePort();
+  const server = await startServer(port);
+  t.after(() => server.kill());
+
+  const url = `http://127.0.0.1:${port}`;
+  const adminTab = await connect(url);
+  const secondAdminTab = await connect(url);
+  const userAttempt = await connect(url);
+  t.after(() => {
+    adminTab.close();
+    secondAdminTab.close();
+    userAttempt.close();
+  });
+
+  const login = await emitWithAck(adminTab, "admin:login", {
+    password: "test-password",
+    clientId: "admin-browser",
+  });
+  assert.equal(login.ok, true);
+  assert.ok(login.adminSessionToken);
+
+  const resumedAdmin = await emitWithAck(secondAdminTab, "session:resume", {
+    role: "admin",
+    clientId: "admin-browser",
+    adminSessionToken: login.adminSessionToken,
+  });
+  assert.equal(resumedAdmin.ok, true);
+  assert.equal(resumedAdmin.role, "admin");
+
+  const blockedUserJoin = await emitWithAck(userAttempt, "user:join", {
+    nickname: "학생1",
+    clientId: "admin-browser",
+  });
+  assert.equal(blockedUserJoin.ok, false);
+  assert.match(blockedUserJoin.error, /이미 운영자/);
+
+  assert.equal((await emitWithAck(adminTab, "session:leave")).ok, true);
+
+  const newUser = await connect(url);
+  t.after(() => newUser.close());
+  const joinAfterLeave = await emitWithAck(newUser, "user:join", {
+    nickname: "학생1",
+    clientId: "admin-browser",
+  });
+  assert.equal(joinAfterLeave.ok, true);
+});

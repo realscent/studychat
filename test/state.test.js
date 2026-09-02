@@ -59,6 +59,55 @@ test("a push round counts logical users, not duplicate tabs", () => {
   assert.equal(state.snapshot().push.totalCount, 1);
 });
 
+test("a browser client cannot be both a user and an admin", () => {
+  const state = new ClassroomState();
+  state.addUser("socket-1", "학생1", "10.1.3.10", "browser-1");
+
+  assert.throws(
+    () => state.addAdmin("socket-2", "운영자", "10.1.3.10", "browser-1", "token"),
+    {
+      message: "이미 사용자로 입장한 브라우저입니다. 나가기 후 운영자로 로그인하세요.",
+    },
+  );
+
+  const secondState = new ClassroomState();
+  secondState.addAdmin("socket-1", "운영자", "10.1.3.10", "browser-1", "token");
+
+  assert.throws(
+    () => secondState.addUser("socket-2", "학생1", "10.1.3.10", "browser-1"),
+    {
+      message: "이미 운영자로 로그인한 브라우저입니다. 나가기 후 사용자로 입장하세요.",
+    },
+  );
+});
+
+test("admin sessions can be resumed until explicit leave", () => {
+  const state = new ClassroomState();
+  const admin = state.addAdmin(
+    "socket-1",
+    "운영자",
+    "10.1.3.10",
+    "browser-1",
+    "token-1",
+  );
+
+  assert.equal(state.getAdminSession("browser-1", "token-1").id, admin.id);
+  assert.equal(state.remove("socket-1").role, "admin-tab");
+  assert.equal(state.getAdminSession("browser-1", "token-1").id, admin.id);
+
+  const resumed = state.addAdmin(
+    "socket-2",
+    "운영자",
+    "10.1.3.10",
+    "browser-1",
+    "token-1",
+  );
+  assert.equal(resumed.socketIds.size, 1);
+
+  state.removeAdmin("browser-1");
+  assert.equal(state.getAdminSession("browser-1", "token-1"), null);
+});
+
 test("admin snapshots include user IPs and blocklist", () => {
   const state = new ClassroomState();
   state.addUser("user-1", "학생1", "::ffff:10.1.3.10");

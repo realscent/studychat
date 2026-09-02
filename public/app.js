@@ -33,11 +33,15 @@ const completeMessage = document.querySelector("#complete-message");
 const completeOkButton = document.querySelector("#complete-ok-button");
 const BROWSER_ID_KEY = "studychat.browserClientId";
 const NICKNAME_KEY = "studychat.nickname";
+const SESSION_ROLE_KEY = "studychat.sessionRole";
+const ADMIN_SESSION_TOKEN_KEY = "studychat.adminSessionToken";
 
 let role = null;
 let myUserId = null;
 let latestState = null;
 let completeRoundShown = null;
+let autoResumeAttempted = false;
+let isLeaving = false;
 
 function createBrowserClientId() {
   if (window.crypto?.randomUUID) {
@@ -63,6 +67,36 @@ function getBrowserClientId() {
 }
 
 const browserClientId = getBrowserClientId();
+
+function readStoredValue(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function writeStoredValue(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (_error) {
+    // Best effort only.
+  }
+}
+
+function removeStoredValue(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (_error) {
+    // Best effort only.
+  }
+}
+
+function clearStoredSession() {
+  removeStoredValue(SESSION_ROLE_KEY);
+  removeStoredValue(NICKNAME_KEY);
+  removeStoredValue(ADMIN_SESSION_TOKEN_KEY);
+}
 
 try {
   const savedNickname = localStorage.getItem(NICKNAME_KEY);
@@ -313,11 +347,92 @@ function showCompleteModal(payload) {
 function showBlocked(message) {
   role = null;
   myUserId = null;
+  clearStoredSession();
   appShell.hidden = true;
   joinScreen.hidden = false;
   nicknameInput.disabled = true;
   userForm.querySelector("button").disabled = true;
   setEntryError(message || "차단된 IP입니다. 운영자에게 문의하세요.");
+}
+
+function storeUserSession(nickname) {
+  writeStoredValue(SESSION_ROLE_KEY, "user");
+  writeStoredValue(NICKNAME_KEY, nickname);
+  removeStoredValue(ADMIN_SESSION_TOKEN_KEY);
+}
+
+function storeAdminSession(adminSessionToken) {
+  writeStoredValue(SESSION_ROLE_KEY, "admin");
+  if (adminSessionToken) {
+    writeStoredValue(ADMIN_SESSION_TOKEN_KEY, adminSessionToken);
+  }
+  removeStoredValue(NICKNAME_KEY);
+}
+
+async function resumeStoredSession() {
+  if (role || autoResumeAttempted) {
+    return;
+  }
+
+  let storedRole = readStoredValue(SESSION_ROLE_KEY);
+  if (!storedRole && readStoredValue(NICKNAME_KEY)) {
+    storedRole = "user";
+    writeStoredValue(SESSION_ROLE_KEY, "user");
+  }
+
+  if (!storedRole) {
+    return;
+  }
+
+  autoResumeAttempted = true;
+  setEntryError("기존 세션으로 입장 중입니다.");
+
+  const payload = {
+    role: storedRole,
+    clientId: browserClientId,
+  };
+
+  if (storedRole === "user") {
+    const nickname = readStoredValue(NICKNAME_KEY);
+    if (!nickname) {
+      clearStoredSession();
+      setEntryError();
+      return;
+    }
+    payload.nickname = nickname;
+  } else if (storedRole === "admin") {
+    const adminSessionToken = readStoredValue(ADMIN_SESSION_TOKEN_KEY);
+    if (!adminSessionToken) {
+      clearStoredSession();
+      setEntryError();
+      return;
+    }
+    payload.adminSessionToken = adminSessionToken;
+  } else {
+    clearStoredSession();
+    setEntryError();
+    return;
+  }
+
+  const response = await emitWithAck("session:resume", payload);
+  if (!response.ok) {
+    clearStoredSession();
+    setEntryError(response.error);
+    return;
+  }
+
+  if (response.role === "user") {
+    myUserId = response.userId;
+    nicknameInput.value = response.nickname || payload.nickname;
+    storeUserSession(nicknameInput.value);
+    enterRoom("user", response.state);
+    return;
+  }
+
+  if (response.role === "admin") {
+    storeAdminSession(response.adminSessionToken || payload.adminSessionToken);
+    enterRoom("admin", response.state);
+  }
 }
 
 userForm.addEventListener("submit", async (event) => {
@@ -338,11 +453,7 @@ userForm.addEventListener("submit", async (event) => {
   if (response.nickname) {
     nicknameInput.value = response.nickname;
   }
-  try {
-    localStorage.setItem(NICKNAME_KEY, nicknameInput.value);
-  } catch (_error) {
-    // Best effort only.
-  }
+  storeUserSession(nicknameInput.value);
   enterRoom("user", response.state);
 });
 
@@ -352,6 +463,7 @@ adminForm.addEventListener("submit", async (event) => {
 
   const response = await emitWithAck("admin:login", {
     password: adminPasswordInput.value,
+    clientId: browserClientId,
   });
 
   if (!response.ok) {
@@ -361,6 +473,7 @@ adminForm.addEventListener("submit", async (event) => {
 
   nicknameInput.disabled = false;
   userForm.querySelector("button").disabled = false;
+  storeAdminSession(response.adminSessionToken);
   enterRoom("admin", response.state);
 });
 
@@ -471,12 +584,25 @@ messages.addEventListener("contextmenu", async (event) => {
   }
 });
 
-leaveButton.addEventListener("click", () => {
+leaveButton.addEventListener("click", async () => {
+  isLeaving = true;
+  clearStoredSession();
+  if (role) {
+    await emitWithAck("session:leave", { clientId: browserClientId });
+  }
   window.location.reload();
 });
 
 socket.on("state:update", renderState);
 socket.on("push:complete", showCompleteModal);
+socket.on("session:left", () => {
+  if (isLeaving) {
+    return;
+  }
+
+  clearStoredSession();
+  window.location.reload();
+});
 socket.on("access:blocked", (payload) => {
   showBlocked(payload?.message);
 });
@@ -495,5 +621,18 @@ socket.on("disconnect", () => {
 socket.on("connect", () => {
   if (role) {
     setRoomError("연결이 다시 생성되었습니다. 새로고침 후 다시 입장하세요.");
+    return;
+  }
+
+  resumeStoredSession();
+});
+
+if (socket.connected) {
+  resumeStoredSession();
+}
+
+window.addEventListener("storage", (event) => {
+  if (event.key === SESSION_ROLE_KEY && event.newValue === null && role) {
+    window.location.reload();
   }
 });
