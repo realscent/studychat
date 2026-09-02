@@ -437,19 +437,35 @@ test("users can upload attachments into chat messages", async (t) => {
   );
 
   const uploadResponse = await emitWithAck(user, "file:upload", {
-    name: "hello.txt",
-    type: "text/plain",
     body: "자료입니다",
-    file: Buffer.from("hello file"),
+    files: [
+      {
+        name: "hello.txt",
+        type: "text/plain",
+        file: Buffer.from("hello file"),
+      },
+      {
+        name: "demo.mp4",
+        type: "video/mp4",
+        file: Buffer.from("video bytes"),
+      },
+    ],
   });
 
   assert.equal(uploadResponse.ok, true);
   assert.equal(uploadResponse.message.body, "자료입니다");
-  assert.equal(uploadResponse.message.attachments.length, 1);
+  assert.equal(uploadResponse.message.attachments.length, 2);
   assert.equal(uploadResponse.message.attachments[0].originalName, "hello.txt");
   assert.equal(uploadResponse.message.attachments[0].kind, "file");
+  assert.equal(uploadResponse.message.attachments[1].originalName, "demo.mp4");
+  assert.equal(uploadResponse.message.attachments[1].kind, "video");
 
   const download = await fetch(`${url}${uploadResponse.message.attachments[0].url}`);
   assert.equal(download.status, 200);
+  assert.equal(download.headers.get("content-disposition"), "attachment");
   assert.equal(await download.text(), "hello file");
+
+  const video = await fetch(`${url}${uploadResponse.message.attachments[1].url}`);
+  assert.equal(video.status, 200);
+  assert.equal(video.headers.get("content-disposition"), null);
 });

@@ -13,8 +13,19 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin1234";
 const BLOCKLIST_FILE =
   process.env.BLOCKLIST_FILE || path.join(__dirname, "data", "blocked-ips.json");
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, "data", "uploads");
-const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 10 * 1024 * 1024);
-const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
+const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 50 * 1024 * 1024);
+const MAX_ATTACHMENTS_PER_UPLOAD = 4;
+const INLINE_MEDIA_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".webp",
+  ".mp4",
+  ".webm",
+  ".mov",
+  ".m4v",
+]);
 
 function loadBlockedIps() {
   if (!fs.existsSync(BLOCKLIST_FILE)) {
@@ -41,7 +52,7 @@ app.set("trust proxy", true);
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  maxHttpBufferSize: MAX_UPLOAD_BYTES + 1024 * 1024,
+  maxHttpBufferSize: MAX_UPLOAD_BYTES * MAX_ATTACHMENTS_PER_UPLOAD + 1024 * 1024,
 });
 const state = new ClassroomState({ blockedIps: loadBlockedIps() });
 
@@ -52,7 +63,7 @@ app.use(
     fallthrough: false,
     setHeaders(res, filePath) {
       res.setHeader("X-Content-Type-Options", "nosniff");
-      if (!IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+      if (!INLINE_MEDIA_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
         res.setHeader("Content-Disposition", "attachment");
       }
     },
@@ -132,6 +143,9 @@ function getStoredExtension(originalName, mimeType) {
     "image/png": ".png",
     "image/gif": ".gif",
     "image/webp": ".webp",
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "video/webm": ".webm",
     "application/pdf": ".pdf",
     "text/plain": ".txt",
   };
@@ -153,6 +167,18 @@ function toBuffer(input) {
   }
 
   return null;
+}
+
+function getAttachmentKind(mimeType) {
+  if (mimeType.startsWith("image/")) {
+    return "image";
+  }
+
+  if (mimeType.startsWith("video/")) {
+    return "video";
+  }
+
+  return "file";
 }
 
 function saveUploadedFile(payload) {
@@ -180,8 +206,32 @@ function saveUploadedFile(payload) {
     mimeType,
     size: buffer.length,
     url: `/uploads/${encodeURIComponent(storedName)}`,
-    kind: mimeType.startsWith("image/") ? "image" : "file",
+    kind: getAttachmentKind(mimeType),
   };
+}
+
+function saveUploadedFiles(payload) {
+  const rawFiles = Array.isArray(payload?.files) ? payload.files : [payload];
+  if (rawFiles.length === 0) {
+    throw new Error("업로드할 파일이 없습니다.");
+  }
+
+  if (rawFiles.length > MAX_ATTACHMENTS_PER_UPLOAD) {
+    throw new Error(
+      `한 메시지에는 파일을 ${MAX_ATTACHMENTS_PER_UPLOAD}개까지 첨부할 수 있습니다.`,
+    );
+  }
+
+  const attachments = [];
+  try {
+    rawFiles.forEach((filePayload) => {
+      attachments.push(saveUploadedFile(filePayload));
+    });
+    return attachments;
+  } catch (error) {
+    deleteAttachmentFiles(attachments);
+    throw error;
+  }
 }
 
 function deleteAttachmentFiles(attachments = []) {
@@ -435,11 +485,11 @@ io.on("connection", (socket) => {
         throw new Error("먼저 입장하세요.");
       }
 
-      const attachment = saveUploadedFile(payload);
+      const attachments = saveUploadedFiles(payload);
       const message = state.addChatMessage({
         socketId: socket.id,
         body: payload?.body,
-        attachments: [attachment],
+        attachments,
       });
 
       respond(reply, { ok: true, message });

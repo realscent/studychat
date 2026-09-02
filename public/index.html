@@ -104,6 +104,16 @@
       </section>
     </div>
 
+    <div id="media-modal" class="media-backdrop" hidden>
+      <section class="media-modal" role="dialog" aria-modal="true" aria-labelledby="media-caption">
+        <button id="media-close-button" class="media-close-button" type="button" aria-label="닫기">×</button>
+        <button id="media-prev-button" class="media-nav-button media-prev-button" type="button" aria-label="이전">‹</button>
+        <div id="media-stage" class="media-stage"></div>
+        <p id="media-caption" class="media-caption"></p>
+        <button id="media-next-button" class="media-nav-button media-next-button" type="button" aria-label="다음">›</button>
+      </section>
+    </div>
+
     <script src="/socket.io/socket.io.js"></script>
     <script src="/app.js"></script>
   </body>
