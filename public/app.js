@@ -635,7 +635,7 @@ async function readUploadFile(file, index = 0) {
   };
 }
 
-async function uploadFiles(fileBatch, body = "", batchIndex = 0) {
+async function uploadFileBatch(fileBatch, body = "", batchIndex = 0) {
   const files = await Promise.all(
     fileBatch.map((file, index) =>
       readUploadFile(file, batchIndex * MAX_FILES_PER_MESSAGE + index),
@@ -649,8 +649,8 @@ async function uploadFiles(fileBatch, body = "", batchIndex = 0) {
 }
 
 async function sendFiles(files, body = "") {
-  const uploadFiles = Array.from(files || []);
-  if (uploadFiles.length === 0) {
+  const selectedFiles = Array.from(files || []);
+  if (selectedFiles.length === 0) {
     return true;
   }
 
@@ -660,21 +660,25 @@ async function sendFiles(files, body = "") {
   }
 
   setRoomError();
-  setUploadStatus(`${uploadFiles.length}개 파일 업로드 중입니다.`);
+  setUploadStatus(`${selectedFiles.length}개 파일 업로드 중입니다.`);
   attachButton.disabled = true;
   chatInput.disabled = true;
 
   let ok = true;
   try {
-    for (let index = 0; index < uploadFiles.length; index += MAX_FILES_PER_MESSAGE) {
-      const batch = uploadFiles.slice(index, index + MAX_FILES_PER_MESSAGE);
+    for (let index = 0; index < selectedFiles.length; index += MAX_FILES_PER_MESSAGE) {
+      const batch = selectedFiles.slice(index, index + MAX_FILES_PER_MESSAGE);
       const batchNumber = Math.floor(index / MAX_FILES_PER_MESSAGE) + 1;
-      const totalBatches = Math.ceil(uploadFiles.length / MAX_FILES_PER_MESSAGE);
+      const totalBatches = Math.ceil(selectedFiles.length / MAX_FILES_PER_MESSAGE);
       if (totalBatches > 1) {
         setUploadStatus(`${batchNumber}/${totalBatches} 묶음 업로드 중입니다.`);
       }
 
-      const response = await uploadFiles(batch, index === 0 ? body : "", batchNumber - 1);
+      const response = await uploadFileBatch(
+        batch,
+        index === 0 ? body : "",
+        batchNumber - 1,
+      );
       if (!response.ok) {
         setRoomError(response.error);
         ok = false;
